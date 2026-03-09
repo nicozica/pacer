@@ -1,0 +1,17 @@
+{
+  "name": "pacer",
+  "version": "0.1.0",
+  "description": "Personal running workflow assistant",
+  "scripts": {
+    "capture": "ts-node --transpile-only src/capture/runner.ts"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "playwright": "^1.42.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.3.3"
+  }
+}

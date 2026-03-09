@@ -1,0 +1,12 @@
+node_modules/
+dist/
+
+# Secrets
+.env
+
+# Runtime storage — keep folder structure, ignore contents
+storage/screenshots/*
+storage/json/*
+storage/auth/*
+storage/logs/*
+!storage/**/.gitkeep
