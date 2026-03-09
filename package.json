@@ -3,6 +3,8 @@
   "version": "0.1.0",
   "description": "Personal running workflow assistant",
   "scripts": {
+    "auth:strava": "ts-node --transpile-only src/auth/login.ts strava",
+    "auth:garmin": "ts-node --transpile-only src/auth/login.ts garmin",
     "capture": "ts-node --transpile-only src/capture/runner.ts"
   },
   "dependencies": {
