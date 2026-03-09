@@ -11,6 +11,8 @@ const MIME: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
   '.js': 'application/javascript',
   '.css': 'text/css',
+  '.png': 'image/png',
+  '.ico': 'image/x-icon',
 };
 
 function sendJson(res: http.ServerResponse, status: number, data: unknown): void {
