@@ -1,0 +1,253 @@
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: system-ui, -apple-system, sans-serif;
+  font-size: 15px;
+  line-height: 1.5;
+  background: #f4f4f4;
+  color: #1a1a1a;
+  padding-bottom: 2rem;
+}
+
+/* ---- Header ---- */
+
+header {
+  background: #1a1a1a;
+  color: #fff;
+  padding: 0.85rem 1.25rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+header h1 {
+  font-size: 1.1rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.meta {
+  display: flex;
+  align-items: center;
+  gap: 0.875rem;
+  font-size: 0.8rem;
+  color: #999;
+}
+
+/* ---- Layout ---- */
+
+main {
+  max-width: 900px;
+  margin: 1.25rem auto;
+  padding: 0 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+
+section {
+  background: #fff;
+  border-radius: 8px;
+  padding: 1.125rem 1.25rem;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.07);
+}
+
+section > h2 {
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: #999;
+  margin-bottom: 0.875rem;
+}
+
+/* ---- Data cards ---- */
+
+#data-panel {
+  background: none;
+  box-shadow: none;
+  padding: 0;
+}
+
+.cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 0.875rem;
+  margin-bottom: 0.875rem;
+}
+
+.card {
+  background: #fff;
+  border-radius: 8px;
+  padding: 1rem 1.125rem;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.07);
+}
+
+.card h2 {
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: #aaa;
+  margin-bottom: 0.5rem;
+}
+
+.card-body {
+  font-size: 0.875rem;
+  line-height: 1.65;
+}
+
+.card-body .date {
+  color: #888;
+  font-size: 0.82rem;
+}
+
+.card-body .empty {
+  color: #bbb;
+}
+
+.week-summary {
+  background: #fff;
+  border-radius: 8px;
+  padding: 0.7rem 1.125rem;
+  font-size: 0.875rem;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.07);
+  color: #444;
+}
+
+/* ---- Form ---- */
+
+.form-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 0.75rem 1.125rem;
+}
+
+.form-grid .full-width {
+  grid-column: 1 / -1;
+}
+
+label {
+  display: flex;
+  flex-direction: column;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: #666;
+  gap: 0.25rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+select,
+input[type="text"],
+textarea {
+  font-family: inherit;
+  font-size: 0.9rem;
+  font-weight: 400;
+  padding: 0.4rem 0.6rem;
+  border: 1px solid #ddd;
+  border-radius: 5px;
+  background: #fafafa;
+  color: #1a1a1a;
+  width: 100%;
+  transition: border-color 0.1s;
+}
+
+select:focus,
+input[type="text"]:focus,
+textarea:focus {
+  outline: none;
+  border-color: #888;
+  background: #fff;
+}
+
+/* ---- Brief ---- */
+
+#brief-preview {
+  width: 100%;
+  font-family: 'Courier New', 'Courier', monospace;
+  font-size: 0.82rem;
+  line-height: 1.55;
+  background: #fafafa;
+  border: 1px solid #ddd;
+  border-radius: 5px;
+  padding: 0.75rem;
+  resize: vertical;
+  margin-bottom: 0.75rem;
+  color: #1a1a1a;
+}
+
+.actions {
+  display: flex;
+  gap: 0.625rem;
+  flex-wrap: wrap;
+}
+
+/* ---- Buttons ---- */
+
+button {
+  font-family: inherit;
+  font-size: 0.85rem;
+  font-weight: 500;
+  padding: 0.4rem 0.9rem;
+  border-radius: 5px;
+  border: 1px solid #ccc;
+  background: #fff;
+  cursor: pointer;
+  transition: background 0.12s;
+}
+
+button:hover:not(:disabled) {
+  background: #f0f0f0;
+}
+
+button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.meta button {
+  border-color: #555;
+  color: #ddd;
+  background: transparent;
+  font-size: 0.8rem;
+}
+
+.meta button:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+/* ---- Error ---- */
+
+.error {
+  background: #fff8e1;
+  border: 1px solid #f0c040;
+  border-radius: 5px;
+  padding: 0.55rem 0.875rem;
+  font-size: 0.875rem;
+  color: #5a3e00;
+  margin-bottom: 0.75rem;
+}
+
+.hidden {
+  display: none;
+}
+
+/* ---- Responsive ---- */
+
+@media (max-width: 480px) {
+  header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+  .cards {
+    grid-template-columns: 1fr;
+  }
+}

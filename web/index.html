@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Pacer</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header>
+  <h1>Pacer</h1>
+  <div class="meta">
+    <span id="last-updated">Loading…</span>
+    <button id="btn-refresh">↺ Refresh from Strava</button>
+  </div>
+</header>
+
+<main>
+
+  <section id="data-panel">
+    <div class="cards">
+      <div class="card">
+        <h2>Latest Activity</h2>
+        <div id="latest-content" class="card-body">—</div>
+      </div>
+      <div class="card">
+        <h2>Latest Run</h2>
+        <div id="run-content" class="card-body">—</div>
+      </div>
+      <div class="card">
+        <h2>Latest Ride</h2>
+        <div id="ride-content" class="card-body">—</div>
+      </div>
+    </div>
+    <div id="week-summary" class="week-summary">—</div>
+  </section>
+
+  <section id="form-section">
+    <h2>How I feel</h2>
+    <div class="form-grid">
+      <label>General feeling
+        <select id="feeling">
+          <option value="">—</option>
+          <option value="5 — Great">5 — Great</option>
+          <option value="4 — Good">4 — Good</option>
+          <option value="3 — OK">3 — OK</option>
+          <option value="2 — Tired">2 — Tired</option>
+          <option value="1 — Very tired">1 — Very tired</option>
+        </select>
+      </label>
+      <label>Legs
+        <select id="legs">
+          <option value="">—</option>
+          <option value="Fresh">Fresh</option>
+          <option value="Normal">Normal</option>
+          <option value="Heavy">Heavy</option>
+          <option value="Sore">Sore</option>
+        </select>
+      </label>
+      <label>Pain or discomfort
+        <input type="text" id="pain" placeholder="None, or describe…">
+      </label>
+      <label>Sleep
+        <input type="text" id="sleep" placeholder="e.g. 7h, good, poor…">
+      </label>
+      <label>Available time tomorrow
+        <input type="text" id="time-tomorrow" placeholder="e.g. 1 hour, 45 min…">
+      </label>
+      <label>Goal for tomorrow
+        <input type="text" id="goal" placeholder="e.g. easy run, rest…">
+      </label>
+      <label class="full-width">Extra notes
+        <textarea id="notes" rows="3" placeholder="Anything else…"></textarea>
+      </label>
+    </div>
+  </section>
+
+  <section id="brief-section">
+    <h2>Brief for ChatGPT</h2>
+    <div id="error-banner" class="error hidden"></div>
+    <textarea id="brief-preview" rows="22" readonly></textarea>
+    <div class="actions">
+      <button id="btn-copy">Copy to clipboard</button>
+      <button id="btn-download">Download .txt</button>
+    </div>
+  </section>
+
+</main>
+
+<script src="app.js"></script>
+</body>
+</html>

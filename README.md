@@ -1,27 +1,106 @@
 # Pacer
 
-Personal running workflow assistant. Automates browser-based capture of training pages.
+Personal running workflow assistant.
+Reads training activities from the Strava API and exports them to local JSON.
+Playwright browser capture is available as a secondary, optional tool.
 
 ## Requirements
 
-- Node.js 20+
-- Chromium (installed via Playwright)
+- Node.js 18+ (uses built-in `fetch`)
+- Chromium — only needed for browser capture (`npx playwright install chromium`)
 
 ## Setup
 
 ```bash
 npm install
-npx playwright install chromium
 cp .env.example .env
+# Edit .env and fill in your Strava API credentials
 ```
 
-Edit `.env` and set the pages you want to capture:
+---
+
+## Strava API
+
+### 1. Create a Strava API application
+
+Go to https://www.strava.com/settings/api and create an app.
+Set the **Authorization Callback Domain** to `localhost`.
+
+Copy the **Client ID** and **Client Secret** into your `.env`:
 
 ```env
-TARGET_PAGES=https://connect.garmin.com/modern/activities,https://www.strava.com/dashboard
+STRAVA_CLIENT_ID=your_client_id
+STRAVA_CLIENT_SECRET=your_client_secret
+STRAVA_REDIRECT_URI=http://localhost
 ```
 
-## Run
+### 2. Authenticate (one-time)
+
+```bash
+npm run strava:auth
+```
+
+This will:
+1. Print an authorization URL
+2. Open it in any browser (on any machine — no display required on the Pi)
+3. After you authorize, Strava redirects to a URL containing a `code`
+4. Paste that full URL or just the `code` into the terminal
+5. Tokens are saved to `storage/auth/strava-tokens.json`
+
+### 3. Fetch activities
+
+```bash
+npm run strava:fetch
+```
+
+Downloads your latest activities and saves them to `storage/json/activities.latest.json`.
+
+The access token is refreshed automatically when expired.
+
+Output format:
+
+```json
+{
+  "fetched_at": "2026-03-09T19:00:00.000Z",
+  "source": "strava-api",
+  "count": 30,
+  "activities": [ ... ]
+}
+```
+
+To change how many activities are fetched, set in `.env`:
+
+```env
+STRAVA_ACTIVITIES_PER_PAGE=50
+```
+
+---
+
+## Browser capture (optional / secondary)
+
+Playwright-based screenshot capture for pages that don't have an API.
+
+### Setup
+
+```bash
+npx playwright install chromium
+```
+
+### Authenticate (browser session)
+
+```bash
+npm run auth:strava   # saves to storage/auth/strava.json
+```
+
+Opens Chromium in headed mode. Log in manually, then press Enter to save the session.
+To run on a headless Pi, generate the session on a machine with a display and copy it:
+
+```bash
+scp /srv/repos/personal/argensonix/labs/pacer/storage/auth/strava.json \
+    rpi:/srv/repos/personal/argensonix/labs/pacer/storage/auth/strava.json
+```
+
+### Capture screenshots
 
 ```bash
 npm run capture
@@ -29,64 +108,28 @@ npm run capture
 
 Screenshots are saved to `storage/screenshots/YYYY-MM-DD/`.
 
-## Auth state
-
-Pages that require login need a saved session. Auth scripts handle this:
+Debug in headed mode:
 
 ```bash
-npm run auth:strava   # saves to storage/auth/strava.json
-npm run auth:garmin   # saves to storage/auth/garmin.json
+HEADLESS=false npm run capture
 ```
 
-Each script will:
-1. Open Chromium in **headed mode** (visible window)
-2. Navigate to the site's login page
-3. Wait for you to log in manually
-4. Ask you to press **Enter** in the terminal to confirm
-5. Save the session to the corresponding file
-
-If the file already exists, you'll see a warning before it's overwritten.
-
-Then set `AUTH_STATE_FILE` in your `.env` to the file you want to use:
-
-```env
-AUTH_STATE_FILE=storage/auth/strava.json
-```
-
-### Generating auth state on a machine with a display
-
-The Raspberry Pi is often used headless via SSH. In that case, generate the auth
-state on a machine with a GUI and copy it to the Pi:
-
-```bash
-# On your desktop/laptop, inside the project directory:
-npm run auth:strava
-
-# Copy the resulting file to the Pi using your SSH alias:
-scp /srv/repos/personal/argensonix/labs/pacer/storage/auth/strava.json \
-    rpi:/srv/repos/personal/argensonix/labs/pacer/storage/auth/strava.json
-```
-
-The Pi can then run `npm run capture` in headless mode using the copied session.
+---
 
 ## Structure
 
 ```
 src/
+  strava/       Strava API integration (auth, client, activity fetch)
   config/       App configuration (reads .env)
-  auth/         Auth scripts — manual login flow, saves storage state per site
-  capture/      Main runner — launches browser, visits pages, saves screenshots
+  capture/      Playwright screenshot runner (secondary)
+  auth/         Playwright browser session scripts (secondary)
   utils/        Storage helpers
 
 storage/
-  screenshots/  Captured screenshots, organized by date
-  auth/         Playwright session state (gitignored)
-  json/         Future: structured data
+  auth/         Tokens and session state (gitignored)
+  json/         Exported activity data
+  screenshots/  Browser captures, organized by date
   logs/         Future: run logs
 ```
 
-## Debug (headed mode)
-
-```bash
-HEADLESS=false npm run capture
-```
