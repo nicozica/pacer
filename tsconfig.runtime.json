@@ -1,0 +1,17 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "outDir": "dist",
+    "rootDir": "src"
+  },
+  "include": [
+    "src/config/**/*",
+    "src/strava/**/*",
+    "src/utils/**/*",
+    "src/web/**/*"
+  ],
+  "exclude": [
+    "src/auth/**/*",
+    "src/capture/**/*"
+  ]
+}

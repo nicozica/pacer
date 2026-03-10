@@ -1,0 +1,21 @@
+[Unit]
+Description=Pacer web app
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Use a dedicated non-root user if available.
+User=pacer
+Group=pacer
+WorkingDirectory=/srv/apps/pacer/current
+EnvironmentFile=/srv/secrets/pacer/.env
+ExecStart=/usr/bin/node dist/web/server.js
+Restart=always
+RestartSec=5
+TimeoutStopSec=20
+KillSignal=SIGINT
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

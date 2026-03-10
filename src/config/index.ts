@@ -1,4 +1,5 @@
 import * as dotenv from 'dotenv';
+import * as path from 'path';
 
 dotenv.config();
 
@@ -9,10 +10,12 @@ function parseOptionalFloat(input: string | undefined): number | null {
 }
 
 export const config = {
+  // Runtime storage root
+  storageDir: process.env.STORAGE_DIR ?? 'storage',
+
   // Playwright capture settings
   headless: process.env.HEADLESS !== 'false',
-  storageDir: process.env.STORAGE_DIR ?? 'storage',
-  authStateFile: process.env.AUTH_STATE_FILE ?? 'storage/auth/strava.json',
+  authStateFile: process.env.AUTH_STATE_FILE ?? path.join(process.env.STORAGE_DIR ?? 'storage', 'auth', 'strava.json'),
   targetPages: (process.env.TARGET_PAGES ?? '')
     .split(',')
     .map((s) => s.trim())
@@ -22,7 +25,7 @@ export const config = {
   stravaClientId: process.env.STRAVA_CLIENT_ID ?? '',
   stravaClientSecret: process.env.STRAVA_CLIENT_SECRET ?? '',
   stravaRedirectUri: process.env.STRAVA_REDIRECT_URI ?? 'http://localhost',
-  stravaTokensFile: process.env.STRAVA_TOKENS_FILE ?? 'storage/auth/strava-tokens.json',
+  stravaTokensFile: process.env.STRAVA_TOKENS_FILE ?? path.join(process.env.STORAGE_DIR ?? 'storage', 'auth', 'strava-tokens.json'),
   stravaActivitiesPerPage: parseInt(process.env.STRAVA_ACTIVITIES_PER_PAGE ?? '30', 10),
 
   // Web server settings

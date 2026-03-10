@@ -1,0 +1,13 @@
+.git/
+.github/
+.env
+.env.*
+node_modules/
+storage/
+dist/
+src/
+.vscode/
+.idea/
+*.log
+.deploy/
+coverage/

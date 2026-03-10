@@ -133,3 +133,11 @@ storage/
   logs/         Future: run logs
 ```
 
+---
+
+## Production deploy (Pipita)
+
+For a release-based rsync workflow (`dist/` artifact, `current` symlink, rollback, and external secrets/storage),
+see:
+
+`docs/pipita-production-flow.md`

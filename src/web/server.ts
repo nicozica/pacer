@@ -59,6 +59,11 @@ const server = http.createServer(async (req, res) => {
   const url = (req.url ?? '/').split('?')[0];
   const method = req.method ?? 'GET';
 
+  if (url === '/api/healthz' && method === 'GET') {
+    sendJson(res, 200, { ok: true });
+    return;
+  }
+
   if (url === '/api/latest' && method === 'GET') {
     try {
       sendJson(res, 200, buildSummary());

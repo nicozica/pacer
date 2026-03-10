@@ -4,54 +4,21 @@
   padding: 0;
 }
 
-:root {
-  --bg-0: #f5f6f8;
-  --bg-1: #f3f4f7;
-  --surface: #ffffff;
-  --surface-soft: #fcfcfd;
-  --border: #e2e6ec;
-  --border-strong: #d5dbe4;
-  --text-strong: #171a1f;
-  --text: #2a3038;
-  --text-muted: #6f7884;
-  --text-subtle: #9098a3;
-  --header-bg-0: #101a2d;
-  --header-bg-1: #0b1322;
-  --shadow-soft: 0 8px 18px -18px rgba(17, 25, 38, 0.44), 0 1px 4px rgba(17, 25, 38, 0.035);
-  --accent: #f55000;
-  --accent-soft: rgba(245, 80, 0, 0.12);
-  --accent-ring: rgba(245, 80, 0, 0.22);
-}
-
 body {
   font-family: system-ui, -apple-system, sans-serif;
   font-size: 15px;
   line-height: 1.5;
-  background:
-    radial-gradient(1200px 700px at 88% -10%, rgba(245, 80, 0, 0.09), transparent 55%),
-    radial-gradient(900px 560px at -8% 24%, rgba(108, 124, 148, 0.08), transparent 60%),
-    linear-gradient(148deg, var(--bg-0) 0%, var(--bg-1) 58%, #f2f1f1 100%);
-  color: var(--text-strong);
+  background: #f4f4f4;
+  color: #1a1a1a;
   padding-bottom: 2rem;
-  min-height: 100vh;
 }
 
 /* ---- Header ---- */
 
 header {
-  background:
-    radial-gradient(680px 260px at 42% 0%, rgba(39, 86, 166, 0.16), transparent 68%),
-    linear-gradient(180deg, var(--header-bg-0) 0%, var(--header-bg-1) 100%);
+  background: #1a1a1a;
   color: #fff;
   padding: 0.85rem 1.25rem;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
-  box-shadow: 0 8px 16px -16px rgba(0, 0, 0, 0.55);
-}
-
-.header-inner {
-  width: 100%;
-  max-width: 900px;
-  margin: 0 auto;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -64,7 +31,6 @@ header h1 {
   font-weight: 700;
   letter-spacing: 0.08em;
   text-transform: uppercase;
-  color: #f4f6f8;
 }
 
 .meta {
@@ -72,14 +38,14 @@ header h1 {
   align-items: center;
   gap: 0.875rem;
   font-size: 0.8rem;
-  color: #aeb6c1;
+  color: #999;
 }
 
 /* ---- Layout ---- */
 
 main {
   max-width: 900px;
-  margin: 1.45rem auto;
+  margin: 1.25rem auto;
   padding: 0 1rem;
   display: flex;
   flex-direction: column;
@@ -87,11 +53,10 @@ main {
 }
 
 section {
-  background: linear-gradient(180deg, var(--surface) 0%, var(--surface-soft) 100%);
-  border: 1px solid var(--border);
-  border-radius: 10px;
+  background: #fff;
+  border-radius: 8px;
   padding: 1.125rem 1.25rem;
-  box-shadow: var(--shadow-soft);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.07);
 }
 
 section > h2 {
@@ -99,7 +64,7 @@ section > h2 {
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.1em;
-  color: #89929d;
+  color: #999;
   margin-bottom: 0.875rem;
 }
 
@@ -107,8 +72,6 @@ section > h2 {
 
 #data-panel {
   background: none;
-  border: 0;
-  border-radius: 0;
   box-shadow: none;
   padding: 0;
 }
@@ -121,11 +84,10 @@ section > h2 {
 }
 
 .card {
-  background: linear-gradient(180deg, #ffffff 0%, #fdfdfe 100%);
-  border: 1px solid var(--border);
-  border-radius: 10px;
+  background: #fff;
+  border-radius: 8px;
   padding: 1rem 1.125rem;
-  box-shadow: var(--shadow-soft);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.07);
 }
 
 .card h2 {
@@ -133,33 +95,31 @@ section > h2 {
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.1em;
-  color: #97a0ab;
+  color: #aaa;
   margin-bottom: 0.5rem;
 }
 
 .card-body {
   font-size: 0.875rem;
   line-height: 1.65;
-  color: var(--text);
 }
 
 .card-body .date {
-  color: var(--text-muted);
+  color: #888;
   font-size: 0.82rem;
 }
 
 .card-body .empty {
-  color: #adb5bf;
+  color: #bbb;
 }
 
 .week-summary {
-  background: linear-gradient(180deg, #ffffff 0%, #fbfcfd 100%);
-  border: 1px solid var(--border);
-  border-radius: 10px;
+  background: #fff;
+  border-radius: 8px;
   padding: 0.7rem 1.125rem;
   font-size: 0.875rem;
-  box-shadow: var(--shadow-soft);
-  color: #3f4752;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.07);
+  color: #444;
 }
 
 /* ---- Form ---- */
@@ -179,7 +139,7 @@ label {
   flex-direction: column;
   font-size: 0.8rem;
   font-weight: 600;
-  color: #646d78;
+  color: #666;
   gap: 0.25rem;
   text-transform: uppercase;
   letter-spacing: 0.04em;
@@ -193,12 +153,12 @@ textarea {
   font-size: 0.9rem;
   font-weight: 400;
   padding: 0.4rem 0.6rem;
-  border: 1px solid var(--border-strong);
-  border-radius: 6px;
-  background: #fdfdfe;
-  color: var(--text-strong);
+  border: 1px solid #ddd;
+  border-radius: 5px;
+  background: #fafafa;
+  color: #1a1a1a;
   width: 100%;
-  transition: border-color 0.12s, box-shadow 0.12s, background 0.12s;
+  transition: border-color 0.1s;
 }
 
 select:focus,
@@ -206,9 +166,8 @@ input[type="text"]:focus,
 input[type="number"]:focus,
 textarea:focus {
   outline: none;
-  border-color: rgba(245, 80, 0, 0.45);
-  box-shadow: 0 0 0 3px var(--accent-ring);
-  background: #ffffff;
+  border-color: #888;
+  background: #fff;
 }
 
 /* ---- Brief ---- */
@@ -224,7 +183,7 @@ textarea:focus {
   gap: 0.45rem;
   font-size: 0.86rem;
   font-weight: 500;
-  color: #545c67;
+  color: #555;
   text-transform: none;
   letter-spacing: normal;
 }
@@ -236,7 +195,7 @@ textarea:focus {
 .field-help {
   margin: 0.18rem 0 0 1.45rem;
   font-size: 0.78rem;
-  color: var(--text-muted);
+  color: #888;
 }
 
 #brief-preview {
@@ -244,13 +203,13 @@ textarea:focus {
   font-family: 'Courier New', 'Courier', monospace;
   font-size: 0.82rem;
   line-height: 1.55;
-  background: #fbfbfc;
-  border: 1px solid var(--border-strong);
-  border-radius: 6px;
+  background: #fafafa;
+  border: 1px solid #ddd;
+  border-radius: 5px;
   padding: 0.75rem;
   resize: vertical;
   margin-bottom: 0.75rem;
-  color: #1c2128;
+  color: #1a1a1a;
 }
 
 .actions {
@@ -266,17 +225,15 @@ button {
   font-size: 0.85rem;
   font-weight: 500;
   padding: 0.4rem 0.9rem;
-  border-radius: 6px;
-  border: 1px solid #cdd2db;
-  background: linear-gradient(180deg, #ffffff 0%, #f9fafb 100%);
+  border-radius: 5px;
+  border: 1px solid #ccc;
+  background: #fff;
   cursor: pointer;
-  box-shadow: 0 1px 0 rgba(17, 25, 38, 0.04);
-  transition: background 0.12s, border-color 0.12s, box-shadow 0.12s;
+  transition: background 0.12s;
 }
 
 button:hover:not(:disabled) {
-  background: linear-gradient(180deg, #ffffff 0%, #f4f6f8 100%);
-  border-color: #c0c7d0;
+  background: #f0f0f0;
 }
 
 button:disabled {
@@ -285,28 +242,25 @@ button:disabled {
 }
 
 .meta button {
-  border-color: rgba(245, 80, 0, 0.52);
-  color: #f7ece6;
-  background: linear-gradient(180deg, rgba(245, 80, 0, 0.2) 0%, rgba(245, 80, 0, 0.12) 100%);
+  border-color: #555;
+  color: #ddd;
+  background: transparent;
   font-size: 0.8rem;
-  font-weight: 600;
-  box-shadow: 0 3px 10px -10px rgba(245, 80, 0, 0.7);
 }
 
 .meta button:hover:not(:disabled) {
-  background: linear-gradient(180deg, rgba(245, 80, 0, 0.29) 0%, rgba(245, 80, 0, 0.18) 100%);
-  border-color: rgba(245, 80, 0, 0.65);
+  background: rgba(255, 255, 255, 0.08);
 }
 
 /* ---- Error ---- */
 
 .error {
-  background: #fff7ec;
-  border: 1px solid rgba(245, 80, 0, 0.35);
-  border-radius: 6px;
+  background: #fff8e1;
+  border: 1px solid #f0c040;
+  border-radius: 5px;
   padding: 0.55rem 0.875rem;
   font-size: 0.875rem;
-  color: #6a431d;
+  color: #5a3e00;
   margin-bottom: 0.75rem;
 }
 
@@ -318,39 +272,38 @@ button:disabled {
 
 .site-footer {
   max-width: 900px;
-  margin: 2.35rem auto 2.8rem;
-  padding: 1.85rem 1rem 0.6rem;
+  margin: 1.9rem auto 2.2rem;
+  padding: 1.35rem 1rem 0.25rem;
   text-align: center;
-  font-size: 0.84rem;
-  color: #7b838e;
+  font-size: 0.82rem;
+  color: #7f858c;
 }
 
 .site-footer p {
-  margin: 0.2rem 0;
-  line-height: 1.45;
+  margin: 0.18rem 0;
 }
 
 .site-footer a {
   color: inherit;
   text-decoration: none;
-  border-bottom: 1px solid #c5cbd4;
+  border-bottom: 1px solid #cdd1d5;
 }
 
 .site-footer a:hover {
-  color: #666f7a;
-  border-bottom-color: #a8afb8;
+  color: #666b72;
+  border-bottom-color: #aeb4ba;
 }
 
 .site-footer a.footer-logo-link {
   display: inline-block;
-  margin-top: 0.95rem;
+  margin-top: 0.72rem;
   border-bottom: 0;
-  opacity: 0.64;
+  opacity: 0.58;
   transition: opacity 0.2s ease;
 }
 
 .site-footer a.footer-logo-link:hover {
-  opacity: 0.9;
+  opacity: 0.82;
   color: inherit;
   border-bottom: 0;
 }
