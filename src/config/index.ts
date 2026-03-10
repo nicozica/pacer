@@ -2,6 +2,12 @@ import * as dotenv from 'dotenv';
 
 dotenv.config();
 
+function parseOptionalFloat(input: string | undefined): number | null {
+  if (!input) return null;
+  const n = parseFloat(input);
+  return Number.isNaN(n) ? null : n;
+}
+
 export const config = {
   // Playwright capture settings
   headless: process.env.HEADLESS !== 'false',
@@ -22,4 +28,8 @@ export const config = {
   // Web server settings
   webHost: process.env.WEB_HOST ?? '127.0.0.1',
   webPort: parseInt(process.env.WEB_PORT ?? '3000', 10),
+
+  // Optional weather fallback location (used when activity has no coordinates)
+  weatherDefaultLat: parseOptionalFloat(process.env.WEATHER_DEFAULT_LAT),
+  weatherDefaultLon: parseOptionalFloat(process.env.WEATHER_DEFAULT_LON),
 };

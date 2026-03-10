@@ -12,12 +12,16 @@ const MIME: Record<string, string> = {
   '.js': 'application/javascript',
   '.css': 'text/css',
   '.png': 'image/png',
+  '.svg': 'image/svg+xml',
   '.ico': 'image/x-icon',
 };
 
 function sendJson(res: http.ServerResponse, status: number, data: unknown): void {
   const body = JSON.stringify(data);
-  res.writeHead(status, { 'Content-Type': 'application/json' });
+  res.writeHead(status, {
+    'Content-Type': 'application/json',
+    'Cache-Control': 'no-store',
+  });
   res.end(body);
 }
 
@@ -52,7 +56,7 @@ function friendlyError(err: Error): string {
 }
 
 const server = http.createServer(async (req, res) => {
-  const url = req.url ?? '/';
+  const url = (req.url ?? '/').split('?')[0];
   const method = req.method ?? 'GET';
 
   if (url === '/api/latest' && method === 'GET') {

@@ -4,7 +4,10 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Pacer by Argensonix</title>
-  <link rel="icon" type="image/png" href="/assets/favicon.png">
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg?v=4">
+  <link rel="icon" type="image/png" sizes="32x32" href="/favicon.png?v=4">
+  <link rel="shortcut icon" href="/favicon.ico?v=4">
+  <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png?v=4">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -18,6 +21,7 @@
 </header>
 
 <main>
+  <div id="error-banner" class="error hidden" role="status" aria-live="polite"></div>
 
   <section id="data-panel">
     <div class="cards">
@@ -38,16 +42,19 @@
   </section>
 
   <section id="form-section">
-    <h2>How I feel</h2>
+    <h2>How I felt (last session)</h2>
     <div class="form-grid">
-      <label>General feeling
-        <select id="feeling">
-          <option value="">—</option>
-          <option value="5 — Great">5 — Great</option>
-          <option value="4 — Good">4 — Good</option>
-          <option value="3 — OK">3 — OK</option>
-          <option value="2 — Tired">2 — Tired</option>
-          <option value="1 — Very tired">1 — Very tired</option>
+      <label>Session type
+        <select id="session-type">
+          <option value="">-</option>
+          <option value="Easy Run">Easy Run</option>
+          <option value="Long Run">Long Run</option>
+          <option value="Hills">Hills</option>
+          <option value="Interval Sessions">Interval Sessions</option>
+          <option value="Recovery Run">Recovery Run</option>
+          <option value="Strides">Strides</option>
+          <option value="Tempo Sessions">Tempo Sessions</option>
+          <option value="Time Trial">Time Trial</option>
         </select>
       </label>
       <label>Legs
@@ -59,17 +66,18 @@
           <option value="Sore">Sore</option>
         </select>
       </label>
-      <label>Pain or discomfort
-        <input type="text" id="pain" placeholder="None, or describe…">
+      <label>Sleep score
+        <input type="number" id="sleep-score" min="0" max="100" step="1" placeholder="0-100">
       </label>
-      <label>Sleep
-        <input type="text" id="sleep" placeholder="e.g. 7h, good, poor…">
-      </label>
-      <label>Available time tomorrow
-        <input type="text" id="time-tomorrow" placeholder="e.g. 1 hour, 45 min…">
-      </label>
-      <label>Goal for tomorrow
-        <input type="text" id="goal" placeholder="e.g. easy run, rest…">
+      <label>Restedness
+        <select id="restedness">
+          <option value="">-</option>
+          <option value="1 - Very tired">1 - Very tired</option>
+          <option value="2 - Tired">2 - Tired</option>
+          <option value="3 - Normal">3 - Normal</option>
+          <option value="4 - Good">4 - Good</option>
+          <option value="5 - Very fresh">5 - Very fresh</option>
+        </select>
       </label>
       <label class="full-width">Extra notes
         <textarea id="notes" rows="3" placeholder="Anything else…"></textarea>
@@ -79,7 +87,13 @@
 
   <section id="brief-section">
     <h2>Brief for ChatGPT</h2>
-    <div id="error-banner" class="error hidden"></div>
+    <div class="file-reminder">
+      <label for="tcx-attached" class="checkbox-label">
+        <input type="checkbox" id="tcx-attached">
+        <span>TCX attached in ChatGPT</span>
+      </label>
+      <p class="field-help">Recommended for detailed analysis</p>
+    </div>
     <textarea id="brief-preview" rows="22" readonly></textarea>
     <div class="actions">
       <button id="btn-copy">Copy to clipboard</button>
@@ -88,6 +102,14 @@
   </section>
 
 </main>
+
+<footer class="site-footer">
+  <p>A tool for better post run feedback</p>
+  <p><em>Running</em> lightly on a <a href="https://zero.nico.ar" target="_blank" rel="noopener noreferrer">Pi Zero 2 W</a></p>
+  <a class="footer-logo-link" href="https://argensonix.com" target="_blank" rel="noopener noreferrer" aria-label="Argensonix logo">
+    <img src="/assets/logo-argensonix.svg" alt="Argensonix logo">
+  </a>
+</footer>
 
 <script src="app.js"></script>
 </body>
