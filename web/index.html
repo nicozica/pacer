@@ -18,7 +18,7 @@
   <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png?v=7">
   <link rel="shortcut icon" href="/favicon.ico?v=7">
   <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png?v=7">
-  <link rel="stylesheet" href="style.css?v=20260310c">
+  <link rel="stylesheet" href="style.css?v=20260317d">
 </head>
 <body>
 
@@ -34,6 +34,7 @@
 
 <main>
   <div id="error-banner" class="error hidden" role="status" aria-live="polite"></div>
+  <div id="save-banner" class="notice hidden" role="status" aria-live="polite"></div>
 
   <section id="data-panel">
     <div class="cards">
@@ -51,6 +52,17 @@
       </div>
     </div>
     <div id="week-summary" class="week-summary">—</div>
+  </section>
+
+  <section id="editor-section">
+    <h2>Source run</h2>
+    <div class="editor-toolbar">
+      <label>Choose run
+        <select id="source-activity"></select>
+      </label>
+    </div>
+    <p id="session-save-status" class="status-line subtle">No session selected</p>
+    <div id="source-card" class="source-card">—</div>
   </section>
 
   <section id="form-section">
@@ -99,30 +111,51 @@
 
   <section id="brief-section">
     <h2>Brief for ChatGPT</h2>
-    <div class="file-reminder">
+    <div class="brief-toolbar">
       <label for="tcx-attached" class="checkbox-label">
         <input type="checkbox" id="tcx-attached">
         <span>TCX attached in ChatGPT</span>
       </label>
-      <p class="field-help">Recommended for detailed analysis</p>
     </div>
     <textarea id="brief-preview" rows="22" readonly></textarea>
-    <div class="actions">
-      <button id="btn-copy">Copy to clipboard</button>
-      <button id="btn-download">Download .txt</button>
+    <div class="actions brief-actions">
+      <button id="btn-copy" class="button-primary">Copy brief</button>
+      <button id="btn-download" class="button-quiet">Download .txt</button>
+    </div>
+  </section>
+
+  <section id="ai-section">
+    <h2>AI Interpretation</h2>
+    <div class="ai-import-grid">
+      <label class="full-width">Coachat JSON
+        <textarea id="ai-json-input" rows="10" placeholder='Paste the AI interpretation JSON here'></textarea>
+      </label>
+      <div class="ai-import-toolbar">
+        <label class="file-label">Upload .json
+          <input type="file" id="ai-json-file" accept=".json,application/json">
+        </label>
+      </div>
+      <p id="ai-import-status" class="field-help ai-status">Paste the JSON returned by ChatGPT or upload a `.json` file.</p>
+      <div id="ai-preview" class="ai-preview">
+        <p class="empty">No AI interpretation imported.</p>
+      </div>
+      <div class="actions save-actions">
+        <button id="btn-save">Save session</button>
+        <button id="btn-save-publish" class="button-primary">Save and publish</button>
+      </div>
     </div>
   </section>
 
 </main>
 
 <footer class="site-footer">
-  <p>A tool for better post-run feedback</p>
-  <p><em>Running</em> lightly on a <a href="https://zero.nico.ar" target="_blank" rel="noopener noreferrer">Pi Zero 2 W</a></p>
+  <p>Private CMS and training backoffice for run.nico.ar</p>
+  <p>Source of truth stays in Pacer. The site stays static and read-only.</p>
   <a class="footer-logo-link" href="https://www.argensonix.com" target="_blank" rel="noopener noreferrer" aria-label="Argensonix logo">
     <img src="/assets/logo-argensonix.svg" alt="Argensonix logo">
   </a>
 </footer>
 
-<script src="app.js"></script>
+<script src="app.js?v=20260317d"></script>
 </body>
 </html>

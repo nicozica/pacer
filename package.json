@@ -10,6 +10,8 @@
     "build:all": "tsc -p tsconfig.json",
     "start": "node dist/web/server.js",
     "start:prod": "node dist/web/server.js",
+    "sessions:seed": "ts-node --transpile-only src/session/seed-cli.ts",
+    "sessions:seed:prod": "node dist/session/seed-cli.js",
     "strava:auth:prod": "node dist/strava/auth-cli.js",
     "strava:fetch:prod": "node dist/strava/fetch-cli.js",
     "strava:auth": "ts-node --transpile-only src/strava/auth-cli.ts",
@@ -19,9 +21,11 @@
     "capture": "ts-node --transpile-only src/capture/runner.ts"
   },
   "dependencies": {
+    "better-sqlite3": "^12.8.0",
     "dotenv": "^16.4.5"
   },
   "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^20.11.0",
     "playwright": "^1.42.0",
     "ts-node": "^10.9.2",

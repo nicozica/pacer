@@ -12,6 +12,8 @@ function parseOptionalFloat(input: string | undefined): number | null {
 export const config = {
   // Runtime storage root
   storageDir: process.env.STORAGE_DIR ?? 'storage',
+  databaseFile: process.env.DATABASE_FILE ?? path.join(process.env.STORAGE_DIR ?? 'storage', 'db', 'pacer.sqlite'),
+  cmsExportDir: process.env.CMS_EXPORT_DIR ?? path.join(process.env.STORAGE_DIR ?? 'storage', 'json', 'cms'),
 
   // Playwright capture settings
   headless: process.env.HEADLESS !== 'false',

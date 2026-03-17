@@ -3,6 +3,7 @@ import * as path from 'path';
 import { config } from '../config';
 
 interface RawActivity {
+  id?: number;
   name: string;
   sport_type: string;
   type: string;
@@ -27,6 +28,7 @@ interface RawLap {
 }
 
 export interface ActivityCard {
+  sourceActivityId: number | null;
   name: string;
   type: string;
   date: string;
@@ -154,6 +156,7 @@ function toCard(a: RawActivity): ActivityCard {
   const { startLat, startLon } = getActivityCoords(a);
 
   return {
+    sourceActivityId: typeof (a as { id?: unknown }).id === 'number' ? (a as { id: number }).id : null,
     name: a.name,
     type,
     date: a.start_date_local.slice(0, 10),

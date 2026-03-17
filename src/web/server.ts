@@ -4,6 +4,8 @@ import * as path from 'path';
 import { config } from '../config';
 import { buildSummary } from './summary';
 import { fetchAndSaveActivities } from '../strava/activities';
+import { getEditorBootstrap, saveSession } from '../session/service';
+import { SaveSessionInput } from '../session/types';
 
 const WEB_DIR = path.resolve(process.cwd(), 'web');
 
@@ -37,6 +39,31 @@ function serveFile(res: http.ServerResponse, filePath: string): void {
   fs.createReadStream(filePath).pipe(res);
 }
 
+function sendText(res: http.ServerResponse, status: number, text: string): void {
+  res.writeHead(status, {
+    'Content-Type': 'text/plain; charset=utf-8',
+    'Cache-Control': 'no-store',
+  });
+  res.end(text);
+}
+
+function readJsonBody<T>(req: http.IncomingMessage): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+
+    req.on('data', (chunk) => chunks.push(Buffer.from(chunk)));
+    req.on('end', () => {
+      try {
+        const raw = Buffer.concat(chunks).toString('utf-8').trim();
+        resolve((raw ? JSON.parse(raw) : {}) as T);
+      } catch (err) {
+        reject(err);
+      }
+    });
+    req.on('error', reject);
+  });
+}
+
 // Translates a known error message into a user-friendly string.
 function friendlyError(err: Error): string {
   const msg = err.message ?? '';
@@ -56,7 +83,8 @@ function friendlyError(err: Error): string {
 }
 
 const server = http.createServer(async (req, res) => {
-  const url = (req.url ?? '/').split('?')[0];
+  const requestUrl = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
+  const url = requestUrl.pathname;
   const method = req.method ?? 'GET';
 
   if (url === '/api/healthz' && method === 'GET') {
@@ -83,12 +111,39 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  if (url === '/api/editor/bootstrap' && method === 'GET') {
+    try {
+      const sourceActivityIdRaw = requestUrl.searchParams.get('sourceActivityId');
+      const sourceActivityId = sourceActivityIdRaw ? parseInt(sourceActivityIdRaw, 10) : null;
+      sendJson(res, 200, getEditorBootstrap(Number.isNaN(sourceActivityId ?? NaN) ? null : sourceActivityId));
+    } catch (err) {
+      sendJson(res, 500, { error: (err as Error).message });
+    }
+    return;
+  }
+
+  if ((url === '/api/editor/save' || url === '/api/editor/save-and-publish') && method === 'POST') {
+    try {
+      const payload = await readJsonBody<SaveSessionInput>(req);
+      const result = await saveSession(payload, {
+        publish: url === '/api/editor/save-and-publish',
+      });
+      sendJson(res, 200, {
+        ok: true,
+        bootstrap: result.bootstrap,
+        publishArtifacts: result.publishArtifacts,
+      });
+    } catch (err) {
+      sendJson(res, 400, { error: (err as Error).message });
+    }
+    return;
+  }
+
   // Static file serving — resolve against WEB_DIR, prevent path traversal
   const rel = url === '/' ? 'index.html' : url.replace(/^\//, '');
   const filePath = path.resolve(WEB_DIR, rel);
   if (!filePath.startsWith(WEB_DIR)) {
-    res.writeHead(403);
-    res.end('Forbidden');
+    sendText(res, 403, 'Forbidden');
     return;
   }
   serveFile(res, filePath);

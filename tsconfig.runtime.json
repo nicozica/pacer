@@ -6,6 +6,7 @@
   },
   "include": [
     "src/config/**/*",
+    "src/session/**/*",
     "src/strava/**/*",
     "src/utils/**/*",
     "src/web/**/*"

@@ -6,6 +6,7 @@ dist/
 
 # Runtime storage — keep folder structure, ignore contents
 storage/screenshots/*
+storage/db/*
 storage/json/*
 storage/auth/*
 storage/logs/*

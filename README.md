@@ -1,7 +1,7 @@
 # Pacer
 
 Personal running workflow assistant.
-Reads training activities from the Strava API and exports them to local JSON.
+Reads training activities from the Strava API, stores curated sessions in SQLite, and exports local CMS snapshots for run.nico.ar.
 Playwright browser capture is available as a secondary, optional tool.
 
 ## Requirements
@@ -16,6 +16,18 @@ npm install
 cp .env.example .env
 # Edit .env and fill in your Strava API credentials
 ```
+
+## Session storage
+
+Pacer now stores curated sessions in SQLite under `storage/db/pacer.sqlite` by default.
+
+Use:
+
+```bash
+npm run sessions:seed
+```
+
+to insert the first two real sessions and refresh local export snapshots under `storage/json/cms/`.
 
 ---
 
