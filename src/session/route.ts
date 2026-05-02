@@ -66,7 +66,7 @@ function buildRouteSvgPoints(
   const latRange = latMax - latMin || 1;
   const lngRange = lngMax - lngMin || 1;
 
-  const pad = 6;
+  const pad = 10;
   const drawWidth = width - pad * 2;
   const drawHeight = height - pad * 2;
   const scale = Math.min(drawWidth / lngRange, drawHeight / latRange);

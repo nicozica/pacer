@@ -2,6 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { config } from '../config';
 import { stravaGet } from '../strava/client';
+import { ensureDir } from '../utils/storage';
 
 export interface SourceActivity {
   id?: number;
@@ -34,12 +35,17 @@ export interface SourceLap {
   average_heartrate?: number;
 }
 
+export interface SourceStreamPayload {
+  [key: string]: { data?: unknown[] } | unknown[] | undefined;
+}
+
 export interface ActivityBundle {
   fetched_at: string;
   source: string;
   count: number;
   activities: SourceActivity[];
   latest_activity_laps?: SourceLap[];
+  latest_activity_streams?: SourceStreamPayload | null;
   latest_activity_temp_stream?: number[] | null;
 }
 
@@ -53,6 +59,7 @@ export interface ResolvedSourceActivity {
   activity: SourceActivity;
   laps: SourceLap[];
   tempStream: number[] | null;
+  streamPayload: SourceStreamPayload | null;
 }
 
 const RUN_TYPES = new Set(['Run', 'TrailRun', 'VirtualRun']);
@@ -90,6 +97,10 @@ const WEATHER_CODE_LABELS: Record<number, string> = {
 
 function getActivitiesBundlePath(): string {
   return path.join(config.storageDir, 'json', 'activities.latest.json');
+}
+
+function getStreamPayloadPath(sourceActivityId: number): string {
+  return path.join(config.storageDir, 'json', 'streams', `${sourceActivityId}.json`);
 }
 
 function parseIsoTimestamp(isoString: string): number {
@@ -153,6 +164,22 @@ export function getActivityLaps(bundle: ActivityBundle, sourceActivityId: number
   return Array.isArray(bundle.latest_activity_laps) ? bundle.latest_activity_laps : [];
 }
 
+function getTempStreamFromPayload(payload: SourceStreamPayload | null): number[] | null {
+  const tempSource = payload?.temp;
+
+  if (Array.isArray(tempSource)) {
+    const values = tempSource.filter((value): value is number => typeof value === 'number');
+    return values.length > 0 ? values : null;
+  }
+
+  if (tempSource && typeof tempSource === 'object' && Array.isArray(tempSource.data)) {
+    const values = tempSource.data.filter((value): value is number => typeof value === 'number');
+    return values.length > 0 ? values : null;
+  }
+
+  return null;
+}
+
 export function averageTemperature(values: number[] | null | undefined): number | null {
   if (!Array.isArray(values) || values.length === 0) return null;
   const total = values.reduce((sum, value) => sum + value, 0);
@@ -161,12 +188,43 @@ export function averageTemperature(values: number[] | null | undefined): number 
 
 export function getActivityTempFromBundle(bundle: ActivityBundle, sourceActivityId: number): number | null {
   if (getLatestActivityId(bundle) !== sourceActivityId) return null;
+  if (bundle.latest_activity_streams) {
+    return averageTemperature(getTempStreamFromPayload(bundle.latest_activity_streams));
+  }
   return averageTemperature(bundle.latest_activity_temp_stream);
 }
 
 function getActivityTempStreamFromBundle(bundle: ActivityBundle, sourceActivityId: number): number[] | null {
   if (getLatestActivityId(bundle) !== sourceActivityId) return null;
+  if (bundle.latest_activity_streams) {
+    return getTempStreamFromPayload(bundle.latest_activity_streams);
+  }
   return Array.isArray(bundle.latest_activity_temp_stream) ? bundle.latest_activity_temp_stream : null;
+}
+
+function getActivityStreamPayloadFromBundle(bundle: ActivityBundle, sourceActivityId: number): SourceStreamPayload | null {
+  if (getLatestActivityId(bundle) !== sourceActivityId) return null;
+  return bundle.latest_activity_streams ?? null;
+}
+
+function readCachedActivityStreamPayload(sourceActivityId: number): SourceStreamPayload | null {
+  const filePath = getStreamPayloadPath(sourceActivityId);
+
+  if (!fs.existsSync(filePath)) {
+    return null;
+  }
+
+  try {
+    return JSON.parse(fs.readFileSync(filePath, 'utf8')) as SourceStreamPayload;
+  } catch {
+    return null;
+  }
+}
+
+function writeCachedActivityStreamPayload(sourceActivityId: number, payload: SourceStreamPayload): void {
+  const filePath = getStreamPayloadPath(sourceActivityId);
+  ensureDir(path.dirname(filePath));
+  fs.writeFileSync(filePath, JSON.stringify(payload, null, 2));
 }
 
 export function paceSecPerKmFromSpeed(speedMetersPerSecond: number): number | null {
@@ -245,19 +303,12 @@ async function fetchActivityLapsById(sourceActivityId: number): Promise<SourceLa
   }
 }
 
-async function fetchActivityTempStreamById(sourceActivityId: number): Promise<number[] | null> {
+async function fetchActivityStreamPayloadById(sourceActivityId: number): Promise<SourceStreamPayload | null> {
   try {
-    const streams = await stravaGet<{ temp?: { data?: unknown[] } }>(`/activities/${sourceActivityId}/streams`, {
-      keys: 'temp',
+    return await stravaGet<SourceStreamPayload>(`/activities/${sourceActivityId}/streams`, {
+      keys: 'distance,time,heartrate,velocity_smooth,moving,temp',
       key_by_type: 'true',
     });
-
-    if (!Array.isArray(streams?.temp?.data)) {
-      return null;
-    }
-
-    const values = streams.temp.data.filter((value): value is number => typeof value === 'number');
-    return values.length > 0 ? values : null;
   } catch {
     return null;
   }
@@ -265,27 +316,37 @@ async function fetchActivityTempStreamById(sourceActivityId: number): Promise<nu
 
 export async function resolveSourceActivity(bundle: ActivityBundle, sourceActivityId: number): Promise<ResolvedSourceActivity> {
   const bundledActivity = findActivityById(bundle, sourceActivityId);
-
-  if (!bundledActivity) {
-    throw new Error(`Could not find source activity ${sourceActivityId}.`);
-  }
-
   const detailedActivity = await fetchActivityDetailById(sourceActivityId);
-  const activity = detailedActivity
+  const activity = detailedActivity && bundledActivity
     ? {
       ...bundledActivity,
       ...detailedActivity,
     }
-    : bundledActivity;
+    : (detailedActivity ?? bundledActivity);
 
-  const bundledLaps = getActivityLaps(bundle, sourceActivityId);
+  if (!activity) {
+    throw new Error(`Could not find source activity ${sourceActivityId}.`);
+  }
+
+  const bundledLaps = bundledActivity ? getActivityLaps(bundle, sourceActivityId) : [];
   const laps = bundledLaps.length > 0 ? bundledLaps : await fetchActivityLapsById(sourceActivityId);
-  const bundledTempStream = getActivityTempStreamFromBundle(bundle, sourceActivityId);
-  const tempStream = bundledTempStream !== null ? bundledTempStream : await fetchActivityTempStreamById(sourceActivityId);
+  const bundledStreamPayload = bundledActivity ? getActivityStreamPayloadFromBundle(bundle, sourceActivityId) : null;
+  const cachedStreamPayload = readCachedActivityStreamPayload(sourceActivityId);
+  const streamPayload = bundledStreamPayload
+    ?? cachedStreamPayload
+    ?? await fetchActivityStreamPayloadById(sourceActivityId);
+
+  if (streamPayload) {
+    writeCachedActivityStreamPayload(sourceActivityId, streamPayload);
+  }
+
+  const bundledTempStream = bundledActivity ? getActivityTempStreamFromBundle(bundle, sourceActivityId) : null;
+  const tempStream = bundledTempStream ?? getTempStreamFromPayload(streamPayload);
 
   return {
     activity,
     laps,
     tempStream,
+    streamPayload,
   };
 }

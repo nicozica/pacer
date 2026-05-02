@@ -82,6 +82,33 @@ function friendlyError(err: Error): string {
   return `Refresh failed: ${msg}`;
 }
 
+function summarizeAiInput(ai: SaveSessionInput['ai'] | undefined): Record<string, unknown> {
+  if (!ai) {
+    return {
+      hasContent: false,
+      signalParagraphCount: 0,
+    };
+  }
+
+  const paragraphs = Array.isArray(ai.signalParagraphs) ? ai.signalParagraphs.length : 0;
+
+  return {
+    hasContent: Boolean(
+      ai.signalTitle ||
+      paragraphs > 0 ||
+      ai.carryForward ||
+      ai.nextRunTitle ||
+      ai.nextRunSummary ||
+      ai.weekTitle ||
+      ai.weekSummary,
+    ),
+    signalTitle: ai.signalTitle || '',
+    signalParagraphCount: paragraphs,
+    nextRunTitle: ai.nextRunTitle || '',
+    weekTitle: ai.weekTitle || '',
+  };
+}
+
 const server = http.createServer(async (req, res) => {
   const requestUrl = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
   const url = requestUrl.pathname;
@@ -124,16 +151,46 @@ const server = http.createServer(async (req, res) => {
 
   if ((url === '/api/editor/save' || url === '/api/editor/save-and-publish') && method === 'POST') {
     try {
+      const publish = url === '/api/editor/save-and-publish';
       const payload = await readJsonBody<SaveSessionInput>(req);
+      console.info('[Pacer API] save request received', {
+        mode: publish ? 'save-and-publish' : 'save',
+        sourceActivityId: payload.sourceActivityId,
+        ai: summarizeAiInput(payload.ai),
+      });
       const result = await saveSession(payload, {
-        publish: url === '/api/editor/save-and-publish',
+        publish,
+      });
+      console.info('[Pacer API] save request succeeded', {
+        mode: publish ? 'save-and-publish' : 'save',
+        sourceActivityId: payload.sourceActivityId,
+        savedSessionId: result.session.core.id,
+        publishedAt: result.session.core.publishedAt,
+        publishStatus: result.publishStatus
+          ? {
+            ok: result.publishStatus.ok,
+            message: result.publishStatus.message,
+            exitCode: result.publishStatus.exitCode,
+            signal: result.publishStatus.signal,
+            logFile: result.publishStatus.logFile,
+            deployTarget: result.publishStatus.deployTarget,
+            verifyOk: result.publishStatus.verifyOk,
+            originVerified: result.publishStatus.originVerified,
+            publicVerified: result.publishStatus.publicVerified,
+            originInconclusive: result.publishStatus.originInconclusive,
+            expectedSessionPath: result.publishStatus.expectedSessionPath,
+            publicUrl: result.publishStatus.publicUrl,
+          }
+          : null,
       });
       sendJson(res, 200, {
         ok: true,
         bootstrap: result.bootstrap,
         publishArtifacts: result.publishArtifacts,
+        publishStatus: result.publishStatus,
       });
     } catch (err) {
+      console.error('[Pacer API] save request failed', err);
       sendJson(res, 400, { error: (err as Error).message });
     }
     return;

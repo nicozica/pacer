@@ -4,6 +4,7 @@ import { config } from '../config';
 import {
   ActivityBundle,
   SourceActivity,
+  SourceStreamPayload,
   averageTemperature,
   fetchHistoricalWeather,
   findActivityById,
@@ -30,6 +31,7 @@ import {
   EditorBootstrap,
   EditorSession,
   PublishArtifacts,
+  PublishStatus,
   RecentRunOption,
   SaveSessionInput,
   SaveSessionOptions,
@@ -49,6 +51,7 @@ import {
 } from './types';
 import { buildRouteMetadata } from './route';
 import { ensureDir } from '../utils/storage';
+import { deployRunSite } from './deploy';
 
 const DAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
@@ -354,6 +357,7 @@ function buildLatestExport(session: StoredSession): SessionExportLatest {
     sessionId: session.core.id,
     sourceActivityId: session.core.sourceActivityId,
     sessionDate: session.core.sessionDate,
+    startDateLocal: session.core.startDateLocal,
     title: session.core.title,
     sport: session.core.sport,
     distanceM: session.core.distanceM,
@@ -410,8 +414,10 @@ function buildArchiveList(sessions: StoredSession[]): SessionExportArchiveList {
   const items: SessionExportArchiveItem[] = sessions.map((session) => ({
     sessionId: session.core.id,
     sessionDate: session.core.sessionDate,
+    startDateLocal: session.core.startDateLocal,
     title: session.core.title,
     sport: session.core.sport,
+    sessionType: session.manual.sessionType || null,
     distanceM: session.core.distanceM,
     movingTimeS: session.core.movingTimeS,
     paceSecPerKm: session.core.paceSecPerKm,
@@ -503,7 +509,175 @@ function mapSourceLapsToRecords(laps: ReturnType<typeof getActivityLaps>): Sessi
   }));
 }
 
-function buildPersistedLaps(laps: ReturnType<typeof getActivityLaps>, existing: StoredSession | null): SessionLapRecord[] {
+function readNumberStream(payload: SourceStreamPayload | null, key: string): number[] {
+  const source = payload?.[key];
+
+  if (Array.isArray(source)) {
+    return source.filter((value): value is number => typeof value === 'number');
+  }
+
+  if (source && typeof source === 'object' && Array.isArray(source.data)) {
+    return source.data.filter((value): value is number => typeof value === 'number');
+  }
+
+  return [];
+}
+
+function readBooleanStream(payload: SourceStreamPayload | null, key: string): boolean[] {
+  const source = payload?.[key];
+
+  if (Array.isArray(source)) {
+    return source.filter((value): value is boolean => typeof value === 'boolean');
+  }
+
+  if (source && typeof source === 'object' && Array.isArray(source.data)) {
+    return source.data.filter((value): value is boolean => typeof value === 'boolean');
+  }
+
+  return [];
+}
+
+function interpolateTimeAtDistance(distances: number[], times: number[], targetDistanceM: number): number | null {
+  if (distances.length === 0 || times.length === 0) {
+    return null;
+  }
+
+  if (targetDistanceM <= 0) {
+    return 0;
+  }
+
+  if (targetDistanceM > distances[distances.length - 1]) {
+    return null;
+  }
+
+  for (let index = 0; index < distances.length; index += 1) {
+    const currentDistance = distances[index];
+    const currentTime = times[index];
+
+    if (currentDistance === targetDistanceM) {
+      return currentTime;
+    }
+
+    if (currentDistance > targetDistanceM) {
+      const previousDistance = index === 0 ? 0 : distances[index - 1];
+      const previousTime = index === 0 ? 0 : times[index - 1];
+      const distanceSpan = currentDistance - previousDistance;
+
+      if (distanceSpan <= 0) {
+        return currentTime;
+      }
+
+      const ratio = (targetDistanceM - previousDistance) / distanceSpan;
+      return previousTime + ((currentTime - previousTime) * ratio);
+    }
+  }
+
+  return times[times.length - 1] ?? null;
+}
+
+function averageHeartRateForRange(
+  distances: number[],
+  heartRates: number[],
+  moving: boolean[],
+  startDistanceM: number,
+  endDistanceM: number
+): number | null {
+  const values: number[] = [];
+  const sampleCount = Math.min(distances.length, heartRates.length);
+
+  for (let index = 0; index < sampleCount; index += 1) {
+    const distance = distances[index];
+
+    if (distance <= startDistanceM || distance > endDistanceM) {
+      continue;
+    }
+
+    if (moving.length > index && moving[index] === false) {
+      continue;
+    }
+
+    values.push(heartRates[index]);
+  }
+
+  if (values.length === 0) {
+    return null;
+  }
+
+  return Math.round(values.reduce((sum, value) => sum + value, 0) / values.length);
+}
+
+function buildKilometerSplitsFromStreams(streamPayload: SourceStreamPayload | null): SessionLapRecord[] {
+  const distances = readNumberStream(streamPayload, 'distance');
+  const times = readNumberStream(streamPayload, 'time');
+  const heartRates = readNumberStream(streamPayload, 'heartrate');
+  const moving = readBooleanStream(streamPayload, 'moving');
+  const sampleCount = Math.min(distances.length, times.length);
+
+  if (sampleCount < 8) {
+    return [];
+  }
+
+  const normalizedDistances = distances.slice(0, sampleCount);
+  const normalizedTimes = times.slice(0, sampleCount);
+  const totalDistanceM = normalizedDistances[sampleCount - 1];
+
+  if (!Number.isFinite(totalDistanceM) || totalDistanceM < 800) {
+    return [];
+  }
+
+  const boundaries = [0];
+  for (let marker = 1000; marker < totalDistanceM; marker += 1000) {
+    boundaries.push(marker);
+  }
+  boundaries.push(totalDistanceM);
+
+  const laps: SessionLapRecord[] = [];
+
+  for (let index = 1; index < boundaries.length; index += 1) {
+    const startDistanceM = boundaries[index - 1];
+    const endDistanceM = boundaries[index];
+    const splitDistanceM = endDistanceM - startDistanceM;
+
+    if (splitDistanceM < 100) {
+      continue;
+    }
+
+    const startTime = interpolateTimeAtDistance(normalizedDistances, normalizedTimes, startDistanceM);
+    const endTime = interpolateTimeAtDistance(normalizedDistances, normalizedTimes, endDistanceM);
+
+    if (startTime === null || endTime === null || endTime <= startTime) {
+      continue;
+    }
+
+    const durationS = Math.round(endTime - startTime);
+    const paceSecPerKm = durationS > 0
+      ? Math.round((durationS / splitDistanceM) * 1000)
+      : null;
+
+    laps.push({
+      id: null,
+      lapIndex: laps.length + 1,
+      distanceM: roundOneDecimal(splitDistanceM),
+      durationS,
+      paceSecPerKm,
+      hrAvg: averageHeartRateForRange(normalizedDistances, heartRates, moving, startDistanceM, endDistanceM),
+    });
+  }
+
+  return laps;
+}
+
+function buildPersistedLaps(
+  laps: ReturnType<typeof getActivityLaps>,
+  streamPayload: SourceStreamPayload | null,
+  existing: StoredSession | null
+): SessionLapRecord[] {
+  const kilometerSplits = buildKilometerSplitsFromStreams(streamPayload);
+
+  if (kilometerSplits.length > 0) {
+    return kilometerSplits;
+  }
+
   if (laps.length > 0) {
     return mapSourceLapsToRecords(laps);
   }
@@ -536,6 +710,7 @@ export async function saveSession(input: SaveSessionInput, options: SaveSessionO
   session: StoredSession;
   bootstrap: EditorBootstrap;
   publishArtifacts: PublishArtifacts | null;
+  publishStatus: PublishStatus | null;
 }> {
   initSessionStore();
   const bundle = readActivityBundle();
@@ -544,13 +719,9 @@ export async function saveSession(input: SaveSessionInput, options: SaveSessionO
   }
 
   const sourceActivity = findActivityById(bundle, input.sourceActivityId);
-  if (!sourceActivity || typeof sourceActivity.id !== 'number') {
-    throw new Error(`Could not find source activity ${input.sourceActivityId}.`);
-  }
-
-  const resolvedSource = await resolveSourceActivity(bundle, sourceActivity.id);
+  const resolvedSource = await resolveSourceActivity(bundle, input.sourceActivityId);
   const activity = resolvedSource.activity;
-  const existing = getStoredSessionBySourceActivityId(sourceActivity.id);
+  const existing = getStoredSessionBySourceActivityId(input.sourceActivityId);
   const manual = sanitizeManualInput(input.manual);
   const files = sanitizeFilesInput(input.files);
   const ai = sanitizeAiInput(input.ai);
@@ -567,10 +738,11 @@ export async function saveSession(input: SaveSessionInput, options: SaveSessionO
   const savedSession = saveStoredSession({
     core: {
       sessionDate,
+      startDateLocal: activity.start_date_local || activity.start_date || null,
       title: activity.name,
       sport: getActivityType(activity),
       source: bundle.source,
-      sourceActivityId: sourceActivity.id,
+      sourceActivityId: input.sourceActivityId,
       distanceM: activity.distance > 0 ? roundOneDecimal(activity.distance) : null,
       movingTimeS: Math.round(activity.moving_time),
       elapsedTimeS: typeof activity.elapsed_time === 'number' ? Math.round(activity.elapsed_time) : null,
@@ -590,18 +762,62 @@ export async function saveSession(input: SaveSessionInput, options: SaveSessionO
       ...ai,
       ...aiMetadata,
     },
-    laps: buildPersistedLaps(resolvedSource.laps, existing),
+    laps: buildPersistedLaps(resolvedSource.laps, resolvedSource.streamPayload, existing),
+  });
+
+  console.info('[Pacer service] Session persisted', {
+    sourceActivityId: input.sourceActivityId,
+    sessionId: savedSession.core.id,
+    publishRequested: options.publish,
+    aiSignalTitle: ai.signalTitle,
+    aiSignalParagraphCount: ai.signalParagraphs.length,
+    aiWeekTitle: ai.weekTitle,
   });
 
   const session = options.publish
     ? markSessionPublished(savedSession.core.id)
     : savedSession;
   const publishArtifacts = options.publish ? publishSnapshots() : null;
+  const publishStatus = options.publish ? await deployRunSite() : null;
+
+  if (publishStatus) {
+    if (publishStatus.ok) {
+      console.info('[Pacer service] Publish hook succeeded', {
+        sessionId: session.core.id,
+        sourceActivityId: input.sourceActivityId,
+        message: publishStatus.message,
+        logFile: publishStatus.logFile,
+        deployTarget: publishStatus.deployTarget,
+        expectedSessionPath: publishStatus.expectedSessionPath,
+        publicUrl: publishStatus.publicUrl,
+      });
+    } else {
+      console.error('[Pacer service] Publish hook failed', {
+        sessionId: session.core.id,
+        sourceActivityId: input.sourceActivityId,
+        message: publishStatus.message,
+        exitCode: publishStatus.exitCode,
+        signal: publishStatus.signal,
+        timedOut: publishStatus.timedOut,
+        locked: publishStatus.locked,
+        logFile: publishStatus.logFile,
+        deployTarget: publishStatus.deployTarget,
+        verifyOk: publishStatus.verifyOk,
+        originVerified: publishStatus.originVerified,
+        publicVerified: publishStatus.publicVerified,
+        originInconclusive: publishStatus.originInconclusive,
+        expectedSessionPath: publishStatus.expectedSessionPath,
+        publicUrl: publishStatus.publicUrl,
+        outputTail: publishStatus.outputTail,
+      });
+    }
+  }
 
   return {
     session,
-    bootstrap: getEditorBootstrap(sourceActivity.id),
+    bootstrap: getEditorBootstrap(input.sourceActivityId),
     publishArtifacts,
+    publishStatus,
   };
 }
 
@@ -609,6 +825,7 @@ export function publishSnapshots(): PublishArtifacts {
   initSessionStore();
   const publishedSessions = listPublishedSessions();
   const latestSession = publishedSessions[0] ?? null;
+  const publishedSessionExports = publishedSessions.map((session) => buildLatestExport(session));
   const latestExport = latestSession ? buildLatestExport(latestSession) : null;
   const nextRunExport = latestSession ? buildNextRunExport(latestSession) : null;
   const snapshotDraft = buildWeeklySnapshotFromSessions(publishedSessions);
@@ -617,12 +834,14 @@ export function publishSnapshots(): PublishArtifacts {
   const generatedAt = new Date().toISOString();
 
   writeJsonFile('latest-session.json', latestExport);
+  writeJsonFile('published-sessions.json', publishedSessionExports);
   writeJsonFile('next-run.json', nextRunExport);
   writeJsonFile('weekly-summary.json', weeklySummary);
   writeJsonFile('archive-list.json', archiveList);
 
   return {
     latestSession: latestExport,
+    publishedSessions: publishedSessionExports,
     nextRun: nextRunExport,
     weeklySummary,
     archiveList,
@@ -640,7 +859,7 @@ const INITIAL_SEEDS: Array<{
   {
     sourceActivityId: 17694891984,
     manual: {
-      sessionType: 'Tempo Sessions',
+      sessionType: 'Tempo Session',
       legs: 'Normal',
       sleepScore: 82,
       restedness: '4 - Good',

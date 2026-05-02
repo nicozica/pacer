@@ -44,6 +44,7 @@ export interface SessionLapRecord {
 export interface SessionCoreRecord {
   id: number;
   sessionDate: string;
+  startDateLocal: string | null;
   title: string;
   sport: string;
   source: string;
@@ -144,6 +145,7 @@ export interface SessionExportLatest {
   sessionId: number;
   sourceActivityId: number;
   sessionDate: string;
+  startDateLocal: string | null;
   title: string;
   sport: string;
   distanceM: number | null;
@@ -201,8 +203,10 @@ export interface WeeklySnapshotRecord {
 export interface SessionExportArchiveItem {
   sessionId: number;
   sessionDate: string;
+  startDateLocal: string | null;
   title: string;
   sport: string;
+  sessionType: string | null;
   distanceM: number | null;
   movingTimeS: number | null;
   paceSecPerKm: number | null;
@@ -218,8 +222,30 @@ export interface SessionExportArchiveList {
 
 export interface PublishArtifacts {
   latestSession: SessionExportLatest | null;
+  publishedSessions: SessionExportLatest[];
   nextRun: SessionExportNextRun | null;
   weeklySummary: WeeklySnapshotRecord | null;
   archiveList: SessionExportArchiveList;
   generatedAt: string;
+}
+
+export interface PublishStatus {
+  ok: boolean;
+  snapshotsOk: boolean;
+  buildOk: boolean;
+  deployOk: boolean;
+  verifyOk: boolean;
+  originVerified: boolean;
+  publicVerified: boolean;
+  originInconclusive: boolean;
+  timedOut: boolean;
+  locked: boolean;
+  exitCode: number | null;
+  signal: string | null;
+  logFile: string | null;
+  deployTarget: string | null;
+  expectedSessionPath: string | null;
+  publicUrl: string | null;
+  message: string;
+  outputTail: string[];
 }

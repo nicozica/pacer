@@ -10,4 +10,5 @@ storage/db/*
 storage/json/*
 storage/auth/*
 storage/logs/*
+storage/locks/*
 !storage/**/.gitkeep

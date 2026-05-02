@@ -9,6 +9,12 @@ function parseOptionalFloat(input: string | undefined): number | null {
   return Number.isNaN(n) ? null : n;
 }
 
+function parseIntWithFallback(input: string | undefined, fallback: number): number {
+  if (!input) return fallback;
+  const n = parseInt(input, 10);
+  return Number.isNaN(n) ? fallback : n;
+}
+
 export const config = {
   // Runtime storage root
   storageDir: process.env.STORAGE_DIR ?? 'storage',
@@ -33,6 +39,12 @@ export const config = {
   // Web server settings
   webHost: process.env.WEB_HOST ?? '127.0.0.1',
   webPort: parseInt(process.env.WEB_PORT ?? '3000', 10),
+
+  // Local publish hook settings
+  runSiteDeployScript:
+    process.env.RUN_SITE_DEPLOY_SCRIPT
+    ?? path.resolve(process.cwd(), 'scripts', 'publish-run-site.sh'),
+  runSiteDeployTimeoutMs: parseIntWithFallback(process.env.RUN_SITE_DEPLOY_TIMEOUT_MS, 300_000),
 
   // Optional weather fallback location (used when activity has no coordinates)
   weatherDefaultLat: parseOptionalFloat(process.env.WEATHER_DEFAULT_LAT),

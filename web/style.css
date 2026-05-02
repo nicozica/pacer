@@ -364,6 +364,11 @@ textarea:focus {
   margin-top: 0.2rem;
 }
 
+.save-actions .notice {
+  flex-basis: 100%;
+  margin: 0.15rem 0 0;
+}
+
 /* ---- Buttons ---- */
 
 button {

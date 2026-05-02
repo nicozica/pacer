@@ -18,7 +18,7 @@
   <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png?v=7">
   <link rel="shortcut icon" href="/favicon.ico?v=7">
   <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png?v=7">
-  <link rel="stylesheet" href="style.css?v=20260317d">
+  <link rel="stylesheet" href="style.css?v=20260502a">
 </head>
 <body>
 
@@ -34,7 +34,6 @@
 
 <main>
   <div id="error-banner" class="error hidden" role="status" aria-live="polite"></div>
-  <div id="save-banner" class="notice hidden" role="status" aria-live="polite"></div>
 
   <section id="data-panel">
     <div class="cards">
@@ -74,10 +73,11 @@
           <option value="Easy Run">Easy Run</option>
           <option value="Long Run">Long Run</option>
           <option value="Hills">Hills</option>
-          <option value="Interval Sessions">Interval Sessions</option>
+          <option value="Interval Session">Interval Session</option>
+          <option value="Race">Race</option>
           <option value="Recovery Run">Recovery Run</option>
           <option value="Strides">Strides</option>
-          <option value="Tempo Sessions">Tempo Sessions</option>
+          <option value="Tempo Session">Tempo Session</option>
           <option value="Time Trial">Time Trial</option>
         </select>
       </label>
@@ -142,6 +142,7 @@
       <div class="actions save-actions">
         <button id="btn-save">Save session</button>
         <button id="btn-save-publish" class="button-primary">Save and publish</button>
+        <div id="save-banner" class="notice hidden" role="status" aria-live="polite"></div>
       </div>
     </div>
   </section>
@@ -156,6 +157,6 @@
   </a>
 </footer>
 
-<script src="app.js?v=20260317d"></script>
+<script src="app.js?v=20260502a"></script>
 </body>
 </html>

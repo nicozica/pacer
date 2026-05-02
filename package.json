@@ -10,6 +10,8 @@
     "build:all": "tsc -p tsconfig.json",
     "start": "node dist/web/server.js",
     "start:prod": "node dist/web/server.js",
+    "sessions:publish": "ts-node --transpile-only src/session/publish-cli.ts",
+    "sessions:rebuild-splits": "ts-node --transpile-only src/session/rebuild-km-splits-cli.ts",
     "sessions:seed": "ts-node --transpile-only src/session/seed-cli.ts",
     "sessions:seed:prod": "node dist/session/seed-cli.js",
     "strava:auth:prod": "node dist/strava/auth-cli.js",

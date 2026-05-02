@@ -180,6 +180,18 @@ function hasAiContent(ai) {
   );
 }
 
+function summarizeAiForLog(ai) {
+  const normalized = ai ?? blankAiInput();
+  return {
+    hasContent: hasAiContent(normalized),
+    signalTitle: normalized.signalTitle || '',
+    signalParagraphCount: Array.isArray(normalized.signalParagraphs) ? normalized.signalParagraphs.length : 0,
+    carryForward: Boolean(normalized.carryForward),
+    nextRunTitle: normalized.nextRunTitle || '',
+    weekTitle: normalized.weekTitle || '',
+  };
+}
+
 function serializeAiInput(ai) {
   if (!ai || !hasAiContent(ai)) return '';
   return JSON.stringify({
@@ -393,9 +405,22 @@ function setButtonsDisabled(disabled) {
 }
 
 async function fetchJson(url, options = {}) {
+  const method = options.method ?? 'GET';
+  console.info(`[Pacer UI] ${method} ${url} request`);
   const res = await fetch(url, options);
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error ?? 'Request failed.');
+  console.info(`[Pacer UI] ${method} ${url} response`, {
+    status: res.status,
+    ok: res.ok,
+    body: data,
+  });
+  if (!res.ok) {
+    console.error(`[Pacer UI] ${method} ${url} failed`, {
+      status: res.status,
+      body: data,
+    });
+    throw new Error(data.error ?? 'Request failed.');
+  }
   return data;
 }
 
@@ -781,13 +806,25 @@ async function saveCurrentSession(publish) {
   hideError();
   hideNotice();
 
+  const actionLabel = publish ? 'save-and-publish' : 'save';
+  const submittedAiRawText = document.getElementById('ai-json-input').value;
   const saveButton = document.getElementById(publish ? 'btn-save-publish' : 'btn-save');
   const originalText = saveButton.textContent;
   saveButton.disabled = true;
   saveButton.textContent = publish ? 'Publishing…' : 'Saving…';
 
+  if (publish) {
+    showNotice('Publishing run.nico.ar… Exporting snapshots, building, deploying, and verifying production.');
+  }
+
   try {
     const payload = collectEditorPayload();
+    console.info(`[Pacer UI] ${actionLabel} payload`, {
+      sourceActivityId: payload.sourceActivityId,
+      manual: payload.manual,
+      files: payload.files,
+      ai: summarizeAiForLog(payload.ai),
+    });
     const response = await fetchJson(publish ? '/api/editor/save-and-publish' : '/api/editor/save', {
       method: 'POST',
       headers: {
@@ -796,16 +833,46 @@ async function saveCurrentSession(publish) {
       body: JSON.stringify(payload),
     });
 
+    console.info(`[Pacer UI] ${actionLabel} completed`, {
+      publishStatus: response.publishStatus ?? null,
+      savedSessionId: response.bootstrap?.selectedSession?.savedSessionId ?? null,
+      updatedAt: response.bootstrap?.selectedSession?.updatedAt ?? null,
+    });
+
     currentEditorBootstrap = response.bootstrap;
     currentEditorSession = response.bootstrap.selectedSession;
     renderEditorState();
 
-    if (publish && response.publishArtifacts?.generatedAt) {
+    if (publish && response.publishStatus) {
+      if (response.publishStatus.ok) {
+        const publicBase = response.publishStatus.publicUrl || 'https://run.nico.ar';
+        const publicPath = response.publishStatus.expectedSessionPath || '/';
+        const visibleAt = `${publicBase.replace(/\/$/, '')}${publicPath}`;
+        const targetSuffix = response.publishStatus.deployTarget
+          ? ` Target: ${response.publishStatus.deployTarget}.`
+          : '';
+        showNotice(`${response.publishStatus.message}.${targetSuffix} Visible at ${visibleAt}`);
+      } else {
+        console.error('[Pacer UI] Publish hook reported failure', response.publishStatus);
+        syncAiImport(submittedAiRawText, {
+          validMessage: 'AI JSON kept in editor after failed publish.',
+          emptyMessage: 'Paste the JSON returned by ChatGPT or upload a `.json` file.',
+        });
+        const logSuffix = response.publishStatus.logFile
+          ? ` Log: ${response.publishStatus.logFile}`
+          : '';
+        const tailSuffix = Array.isArray(response.publishStatus.outputTail) && response.publishStatus.outputTail.length > 0
+          ? ` Last output: ${response.publishStatus.outputTail[response.publishStatus.outputTail.length - 1]}`
+          : '';
+        showError(`Session saved locally, but publish failed. AI JSON was kept in the editor. ${response.publishStatus.message}.${logSuffix}${tailSuffix}`);
+      }
+    } else if (publish && response.publishArtifacts?.generatedAt) {
       showNotice(`Session saved and snapshots refreshed at ${formatTimestamp(response.publishArtifacts.generatedAt)}.`);
     } else {
-      showNotice('Session saved to SQLite.');
+      showNotice('Session saved locally. No build or deploy ran. Use "Save and publish" to publish run.nico.ar.');
     }
   } catch (err) {
+    console.error(`[Pacer UI] ${actionLabel} threw`, err);
     showError(err.message || 'Could not save session.');
   } finally {
     saveButton.disabled = false;

@@ -10,11 +10,8 @@ interface ActivitiesBundle {
   count: number;
   activities: unknown[];
   latest_activity_laps: unknown[];
+  latest_activity_streams: Record<string, unknown> | null;
   latest_activity_temp_stream: number[] | null;
-}
-
-interface StravaStreamByType {
-  temp?: { data?: unknown[] };
 }
 
 function getLatestActivityId(activities: unknown[]): number | null {
@@ -32,20 +29,27 @@ async function fetchLatestActivityLaps(activityId: number): Promise<unknown[]> {
   }
 }
 
-async function fetchLatestActivityTempStream(activityId: number): Promise<number[] | null> {
+async function fetchLatestActivityStreams(activityId: number): Promise<Record<string, unknown> | null> {
   try {
-    const streams = await stravaGet<StravaStreamByType>(`/activities/${activityId}/streams`, {
-      keys: 'temp',
+    return await stravaGet<Record<string, unknown>>(`/activities/${activityId}/streams`, {
+      keys: 'distance,time,heartrate,velocity_smooth,moving,temp',
       key_by_type: 'true',
     });
-    const tempValues = streams?.temp?.data;
-    if (!Array.isArray(tempValues)) return null;
-    const filtered = tempValues.filter((v): v is number => typeof v === 'number');
-    return filtered.length > 0 ? filtered : null;
   } catch (err) {
-    console.warn(`Could not fetch temp stream for activity ${activityId}: ${(err as Error).message}`);
+    console.warn(`Could not fetch streams for activity ${activityId}: ${(err as Error).message}`);
     return null;
   }
+}
+
+function extractTempStream(streams: Record<string, unknown> | null): number[] | null {
+  const temp = streams?.temp;
+
+  if (!temp || typeof temp !== 'object' || !Array.isArray((temp as { data?: unknown[] }).data)) {
+    return null;
+  }
+
+  const filtered = (temp as { data?: unknown[] }).data!.filter((value): value is number => typeof value === 'number');
+  return filtered.length > 0 ? filtered : null;
 }
 
 export async function fetchAndSaveActivities(): Promise<void> {
@@ -57,12 +61,14 @@ export async function fetchAndSaveActivities(): Promise<void> {
   });
 
   let latestActivityLaps: unknown[] = [];
+  let latestActivityStreams: Record<string, unknown> | null = null;
   let latestActivityTempStream: number[] | null = null;
   const latestActivityId = getLatestActivityId(activities);
 
   if (latestActivityId !== null) {
     latestActivityLaps = await fetchLatestActivityLaps(latestActivityId);
-    latestActivityTempStream = await fetchLatestActivityTempStream(latestActivityId);
+    latestActivityStreams = await fetchLatestActivityStreams(latestActivityId);
+    latestActivityTempStream = extractTempStream(latestActivityStreams);
   }
 
   const bundle: ActivitiesBundle = {
@@ -71,6 +77,7 @@ export async function fetchAndSaveActivities(): Promise<void> {
     count: activities.length,
     activities,
     latest_activity_laps: latestActivityLaps,
+    latest_activity_streams: latestActivityStreams,
     latest_activity_temp_stream: latestActivityTempStream,
   };
 

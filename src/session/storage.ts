@@ -3,6 +3,7 @@ import Database from 'better-sqlite3';
 import * as path from 'path';
 import { config } from '../config';
 import { ensureDir } from '../utils/storage';
+import { readActivityBundle } from './source';
 import {
   SessionAIMetadata,
   SessionCoreRecord,
@@ -87,6 +88,24 @@ function backfillLegacyPublishedSessions(db: SqliteDatabase): void {
   }
 }
 
+function backfillLegacyStartDates(db: SqliteDatabase): void {
+  const bundle = readActivityBundle();
+  if (!bundle) return;
+
+  const statement = db.prepare(`
+    UPDATE sessions
+    SET start_date_local = ?
+    WHERE source_activity_id = ?
+      AND start_date_local IS NULL
+  `);
+
+  for (const activity of bundle.activities) {
+    if (typeof activity.id !== 'number') continue;
+    if (typeof activity.start_date_local !== 'string' || !activity.start_date_local.trim()) continue;
+    statement.run(activity.start_date_local, activity.id);
+  }
+}
+
 function getDatabase(): SqliteDatabase {
   if (database) return database;
 
@@ -95,6 +114,7 @@ function getDatabase(): SqliteDatabase {
   database.pragma('journal_mode = WAL');
   database.pragma('foreign_keys = ON');
   migrate(database);
+  backfillLegacyStartDates(database);
 
   return database;
 }
@@ -107,6 +127,7 @@ function migrate(db: SqliteDatabase): void {
         CREATE TABLE IF NOT EXISTS sessions (
           id INTEGER PRIMARY KEY AUTOINCREMENT,
           session_date TEXT NOT NULL,
+          start_date_local TEXT,
           title TEXT NOT NULL,
           sport TEXT NOT NULL,
           source TEXT NOT NULL,
@@ -213,6 +234,21 @@ function migrate(db: SqliteDatabase): void {
 
     migrationV2();
   }
+
+  if (currentVersion < 3) {
+    const migrationV3 = db.transaction(() => {
+      if (!columnExists(db, 'sessions', 'start_date_local')) {
+        db.exec(`
+          ALTER TABLE sessions ADD COLUMN start_date_local TEXT;
+        `);
+      }
+
+      backfillLegacyStartDates(db);
+      db.pragma('user_version = 3');
+    });
+
+    migrationV3();
+  }
 }
 
 function toNullableText(value: unknown): string | null {
@@ -234,6 +270,7 @@ function mapCoreRow(row: Record<string, unknown>): SessionCoreRecord {
   return {
     id: Number(row.id),
     sessionDate: String(row.session_date),
+    startDateLocal: typeof row.start_date_local === 'string' ? row.start_date_local : null,
     title: String(row.title),
     sport: String(row.sport),
     source: String(row.source),
@@ -348,7 +385,7 @@ export function listStoredSessions(): StoredSession[] {
   const rows = db.prepare(`
     SELECT *
     FROM sessions
-    ORDER BY session_date DESC, id DESC
+    ORDER BY session_date DESC, start_date_local DESC, id DESC
   `).all() as Record<string, unknown>[];
 
   return rows.map((row) => mapSession(db, row));
@@ -360,7 +397,7 @@ export function listPublishedSessions(): StoredSession[] {
     SELECT *
     FROM sessions
     WHERE published_at IS NOT NULL
-    ORDER BY session_date DESC, id DESC
+    ORDER BY session_date DESC, start_date_local DESC, id DESC
   `).all() as Record<string, unknown>[];
 
   return rows.map((row) => mapSession(db, row));
@@ -417,16 +454,17 @@ export function saveStoredSession(input: PersistedSessionInput): StoredSession {
   const transaction = db.transaction(() => {
     db.prepare(`
       INSERT INTO sessions (
-        session_date, title, sport, source, source_activity_id, distance_m, moving_time_s,
+        session_date, start_date_local, title, sport, source, source_activity_id, distance_m, moving_time_s,
         elapsed_time_s, pace_sec_per_km, hr_avg, hr_max, elevation_m, weather_temp_c,
         weather_condition, weather_wind_kmh, polyline, city, created_at, updated_at
       ) VALUES (
-        @session_date, @title, @sport, @source, @source_activity_id, @distance_m, @moving_time_s,
+        @session_date, @start_date_local, @title, @sport, @source, @source_activity_id, @distance_m, @moving_time_s,
         @elapsed_time_s, @pace_sec_per_km, @hr_avg, @hr_max, @elevation_m, @weather_temp_c,
         @weather_condition, @weather_wind_kmh, @polyline, @city, @created_at, @updated_at
       )
       ON CONFLICT(source_activity_id) DO UPDATE SET
         session_date = excluded.session_date,
+        start_date_local = COALESCE(excluded.start_date_local, sessions.start_date_local),
         title = excluded.title,
         sport = excluded.sport,
         source = excluded.source,
@@ -445,6 +483,7 @@ export function saveStoredSession(input: PersistedSessionInput): StoredSession {
         updated_at = excluded.updated_at
     `).run({
       session_date: input.core.sessionDate,
+      start_date_local: toNullableText(input.core.startDateLocal),
       title: input.core.title,
       sport: input.core.sport,
       source: input.core.source,
