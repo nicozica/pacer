@@ -44,6 +44,7 @@ import {
   SessionFilesInput,
   SessionLapRecord,
   SessionManualInput,
+  SessionNextRunWorkout,
   SessionSourceSummary,
   StoredSession,
   WeeklyBar,
@@ -54,6 +55,17 @@ import { ensureDir } from '../utils/storage';
 import { deployRunSite } from './deploy';
 
 const DAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+const SESSION_TYPES = new Set([
+  'Easy Run',
+  'Long Run',
+  'Hills',
+  'Interval Session',
+  'Race',
+  'Recovery Run',
+  'Strides',
+  'Tempo Session',
+  'Time Trial',
+]);
 
 function blankManual(): SessionManualInput {
   return {
@@ -84,6 +96,7 @@ function blankAI(): SessionAIInput {
     nextRunDurationMax: null,
     nextRunPaceMinSecPerKm: null,
     nextRunPaceMaxSecPerKm: null,
+    nextRunWorkout: null,
     weekTitle: '',
     weekSummary: '',
   };
@@ -166,6 +179,34 @@ function sanitizeParagraphs(value: unknown): string[] {
     .split('\n')
     .map((entry) => entry.trim())
     .filter(Boolean);
+}
+
+function sanitizeNextRunWorkout(value: unknown): SessionNextRunWorkout | null {
+  if (value === undefined || value === null || value === '') return null;
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('nextRunWorkout must be an object or null.');
+  }
+
+  const type = sanitizeText((value as { type?: unknown }).type);
+  if (!SESSION_TYPES.has(type)) {
+    throw new Error(`nextRunWorkout.type must be one of: ${Array.from(SESSION_TYPES).join(', ')}.`);
+  }
+
+  const rawBlocks = (value as { blocks?: unknown }).blocks;
+  if (!Array.isArray(rawBlocks)) {
+    throw new Error('nextRunWorkout.blocks must be an array of strings.');
+  }
+
+  const blocks = rawBlocks
+    .filter((entry): entry is string => typeof entry === 'string')
+    .map((entry) => entry.trimEnd())
+    .filter((entry) => entry.trim());
+
+  if (blocks.length === 0) {
+    throw new Error('nextRunWorkout.blocks must include at least one block.');
+  }
+
+  return { type, blocks };
 }
 
 function buildRecentRunOptions(bundle: ActivityBundle): RecentRunOption[] {
@@ -263,6 +304,7 @@ function buildEditorSession(bundle: ActivityBundle, sourceActivityId: number): E
         nextRunDurationMax: stored.ai.nextRunDurationMax,
         nextRunPaceMinSecPerKm: stored.ai.nextRunPaceMinSecPerKm,
         nextRunPaceMaxSecPerKm: stored.ai.nextRunPaceMaxSecPerKm,
+        nextRunWorkout: stored.ai.nextRunWorkout,
         weekTitle: stored.ai.weekTitle,
         weekSummary: stored.ai.weekSummary,
       }
@@ -386,6 +428,7 @@ function buildLatestExport(session: StoredSession): SessionExportLatest {
       nextRunDurationMax: session.ai.nextRunDurationMax,
       nextRunPaceMinSecPerKm: session.ai.nextRunPaceMinSecPerKm,
       nextRunPaceMaxSecPerKm: session.ai.nextRunPaceMaxSecPerKm,
+      nextRunWorkout: session.ai.nextRunWorkout,
       weekTitle: session.ai.weekTitle,
       weekSummary: session.ai.weekSummary,
     },
@@ -406,6 +449,7 @@ function buildNextRunExport(session: StoredSession): SessionExportNextRun | null
     durationMax: session.ai.nextRunDurationMax,
     paceMinSecPerKm: session.ai.nextRunPaceMinSecPerKm,
     paceMaxSecPerKm: session.ai.nextRunPaceMaxSecPerKm,
+    ...(session.ai.nextRunWorkout ? { workout: session.ai.nextRunWorkout } : {}),
     updatedAt: session.core.updatedAt,
   };
 }
@@ -482,6 +526,7 @@ function sanitizeAiInput(input: SaveSessionInput['ai']): SessionAIInput {
     nextRunDurationMax: sanitizeOptionalNumber(input?.nextRunDurationMax),
     nextRunPaceMinSecPerKm: sanitizeOptionalNumber(input?.nextRunPaceMinSecPerKm),
     nextRunPaceMaxSecPerKm: sanitizeOptionalNumber(input?.nextRunPaceMaxSecPerKm),
+    nextRunWorkout: sanitizeNextRunWorkout(input?.nextRunWorkout),
     weekTitle: sanitizeText(input?.weekTitle),
     weekSummary: sanitizeText(input?.weekSummary),
   };
@@ -883,6 +928,7 @@ const INITIAL_SEEDS: Array<{
       nextRunDurationMax: 45,
       nextRunPaceMinSecPerKm: 400,
       nextRunPaceMaxSecPerKm: 425,
+      nextRunWorkout: null,
       weekTitle: 'Steady base',
       weekSummary: 'Enough volume to move the week forward without turning it into a spreadsheet contest.',
     },
@@ -919,6 +965,7 @@ const INITIAL_SEEDS: Array<{
       nextRunDurationMax: 40,
       nextRunPaceMinSecPerKm: 410,
       nextRunPaceMaxSecPerKm: 440,
+      nextRunWorkout: null,
       weekTitle: 'Aerobic control first',
       weekSummary: 'The week is moving forward, but the easiest days still need to look easy enough to protect the bigger sessions.',
     },

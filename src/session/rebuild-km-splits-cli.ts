@@ -12,6 +12,7 @@ function toAiInput(session: ReturnType<typeof listStoredSessions>[number]["ai"])
     nextRunDurationMax: session.nextRunDurationMax,
     nextRunPaceMinSecPerKm: session.nextRunPaceMinSecPerKm,
     nextRunPaceMaxSecPerKm: session.nextRunPaceMaxSecPerKm,
+    nextRunWorkout: session.nextRunWorkout,
     weekTitle: session.weekTitle,
     weekSummary: session.weekSummary,
   };

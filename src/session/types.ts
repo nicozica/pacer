@@ -22,8 +22,14 @@ export interface SessionAIInput {
   nextRunDurationMax: number | null;
   nextRunPaceMinSecPerKm: number | null;
   nextRunPaceMaxSecPerKm: number | null;
+  nextRunWorkout: SessionNextRunWorkout | null;
   weekTitle: string;
   weekSummary: string;
+}
+
+export interface SessionNextRunWorkout {
+  type: string;
+  blocks: string[];
 }
 
 export interface SessionAIMetadata {
@@ -178,6 +184,7 @@ export interface SessionExportNextRun {
   durationMax: number | null;
   paceMinSecPerKm: number | null;
   paceMaxSecPerKm: number | null;
+  workout?: SessionNextRunWorkout;
   updatedAt: string;
 }
 

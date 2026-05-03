@@ -42,6 +42,10 @@ It is intentionally small. The goal is not to automate coaching logic yet, but t
 - `next_run_pace_max_sec_per_km`
   Faster edge of the pace guidance, in seconds per kilometer.
 
+- `next_run_workout`
+  Optional practical workout guide for manually recreating the next session in Garmin Connect.
+  When present, `type` must use one of Pacer's controlled session types, and `blocks` is an ordered list of readable workout steps.
+
 - `week_title`
   Short weekly headline.
 
@@ -64,6 +68,12 @@ It is intentionally small. The goal is not to automate coaching logic yet, but t
   "nextRunDurationMax": 45,
   "nextRunPaceMinSecPerKm": 400,
   "nextRunPaceMaxSecPerKm": 425,
+  "nextRunWorkout": {
+    "type": "Easy Run",
+    "blocks": [
+      "Run — 40:00-45:00 @ 6:40-7:05 /km"
+    ]
+  },
   "weekTitle": "Steady base",
   "weekSummary": "Enough volume to move the week forward without turning it into a spreadsheet contest."
 }

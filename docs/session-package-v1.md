@@ -95,6 +95,12 @@ When Pacer loads or saves a session in the editor, the effective package is:
     "nextRunDurationMax": 40,
     "nextRunPaceMinSecPerKm": 410,
     "nextRunPaceMaxSecPerKm": 440,
+    "nextRunWorkout": {
+      "type": "Recovery Run",
+      "blocks": [
+        "Run — 30:00-40:00 easy"
+      ]
+    },
     "weekTitle": "Aerobic control first",
     "weekSummary": "The week is moving forward, but the easiest days still need to look easy enough to protect the bigger sessions."
   }

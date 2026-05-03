@@ -39,6 +39,18 @@ const WEATHER_CODE_LABELS = {
   99: 'thunderstorm',
 };
 
+const SESSION_TYPES = new Set([
+  'Easy Run',
+  'Long Run',
+  'Hills',
+  'Interval Session',
+  'Race',
+  'Recovery Run',
+  'Strides',
+  'Tempo Session',
+  'Time Trial',
+]);
+
 const FORM_INPUT_IDS = [
   'session-type',
   'legs',
@@ -163,6 +175,7 @@ function blankAiInput() {
     nextRunDurationMax: null,
     nextRunPaceMinSecPerKm: null,
     nextRunPaceMaxSecPerKm: null,
+    nextRunWorkout: null,
     weekTitle: '',
     weekSummary: '',
   };
@@ -175,6 +188,7 @@ function hasAiContent(ai) {
     ai.carryForward ||
     ai.nextRunTitle ||
     ai.nextRunSummary ||
+    ai.nextRunWorkout ||
     ai.weekTitle ||
     ai.weekSummary,
   );
@@ -188,6 +202,7 @@ function summarizeAiForLog(ai) {
     signalParagraphCount: Array.isArray(normalized.signalParagraphs) ? normalized.signalParagraphs.length : 0,
     carryForward: Boolean(normalized.carryForward),
     nextRunTitle: normalized.nextRunTitle || '',
+    nextRunWorkout: normalized.nextRunWorkout?.type || '',
     weekTitle: normalized.weekTitle || '',
   };
 }
@@ -204,6 +219,7 @@ function serializeAiInput(ai) {
     nextRunDurationMax: ai.nextRunDurationMax,
     nextRunPaceMinSecPerKm: ai.nextRunPaceMinSecPerKm,
     nextRunPaceMaxSecPerKm: ai.nextRunPaceMaxSecPerKm,
+    nextRunWorkout: ai.nextRunWorkout,
     weekTitle: ai.weekTitle,
     weekSummary: ai.weekSummary,
   }, null, 2);
@@ -273,6 +289,34 @@ function normalizeAiParagraphs(value) {
     .filter(Boolean);
 }
 
+function normalizeNextRunWorkout(value) {
+  if (value === undefined || value === null || value === '') return null;
+
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('Field "nextRunWorkout" must be an object or null.');
+  }
+
+  const type = normalizeAiText(value.type, 'nextRunWorkout.type');
+  if (!SESSION_TYPES.has(type)) {
+    throw new Error(`Field "nextRunWorkout.type" must be one of: ${Array.from(SESSION_TYPES).join(', ')}.`);
+  }
+
+  if (!Array.isArray(value.blocks)) {
+    throw new Error('Field "nextRunWorkout.blocks" must be an array of strings.');
+  }
+
+  const blocks = value.blocks
+    .filter((entry) => typeof entry === 'string')
+    .map((entry) => entry.trimEnd())
+    .filter((entry) => entry.trim());
+
+  if (blocks.length === 0) {
+    throw new Error('Field "nextRunWorkout.blocks" must include at least one block.');
+  }
+
+  return { type, blocks };
+}
+
 function parseAiJsonText(text) {
   const trimmed = text.trim();
   if (!trimmed) return blankAiInput();
@@ -299,6 +343,7 @@ function parseAiJsonText(text) {
     nextRunDurationMax: normalizeAiNumber(readAiJsonField(payload, 'nextRunDurationMax'), 'nextRunDurationMax'),
     nextRunPaceMinSecPerKm: normalizeAiNumber(readAiJsonField(payload, 'nextRunPaceMinSecPerKm'), 'nextRunPaceMinSecPerKm'),
     nextRunPaceMaxSecPerKm: normalizeAiNumber(readAiJsonField(payload, 'nextRunPaceMaxSecPerKm'), 'nextRunPaceMaxSecPerKm'),
+    nextRunWorkout: normalizeNextRunWorkout(readAiJsonField(payload, 'nextRunWorkout')),
     weekTitle: normalizeAiText(readAiJsonField(payload, 'weekTitle'), 'weekTitle'),
     weekSummary: normalizeAiText(readAiJsonField(payload, 'weekSummary'), 'weekSummary'),
   };
@@ -323,8 +368,11 @@ function renderAiPreview(ai) {
   preview.innerHTML = [
     `<p class="ai-preview-row"><strong>Signal:</strong> ${escapeHtml(ai.signalTitle || '—')}</p>`,
     `<p class="ai-preview-row"><strong>Next run:</strong> ${escapeHtml(ai.nextRunTitle || '—')}</p>`,
+    ai.nextRunWorkout
+      ? `<p class="ai-preview-row"><strong>Workout:</strong> ${escapeHtml(ai.nextRunWorkout.type)} · ${escapeHtml(String(ai.nextRunWorkout.blocks.length))} blocks</p>`
+      : '',
     `<p class="ai-preview-row"><strong>Week:</strong> ${escapeHtml(ai.weekTitle || '—')}</p>`,
-  ].join('');
+  ].filter(Boolean).join('');
 }
 
 function syncAiImport(rawText, options = {}) {

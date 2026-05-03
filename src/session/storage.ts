@@ -10,6 +10,7 @@ import {
   SessionFilesInput,
   SessionLapRecord,
   SessionManualInput,
+  SessionNextRunWorkout,
   StoredSession,
   StoredSessionSummary,
   WeeklyBar,
@@ -30,6 +31,7 @@ interface PersistedSessionInput {
     nextRunDurationMax: number | null;
     nextRunPaceMinSecPerKm: number | null;
     nextRunPaceMaxSecPerKm: number | null;
+    nextRunWorkout: SessionNextRunWorkout | null;
     weekTitle: string;
     weekSummary: string;
   };
@@ -249,6 +251,20 @@ function migrate(db: SqliteDatabase): void {
 
     migrationV3();
   }
+
+  if (currentVersion < 4) {
+    const migrationV4 = db.transaction(() => {
+      if (!columnExists(db, 'session_ai', 'next_run_workout_json')) {
+        db.exec(`
+          ALTER TABLE session_ai ADD COLUMN next_run_workout_json TEXT;
+        `);
+      }
+
+      db.pragma('user_version = 4');
+    });
+
+    migrationV4();
+  }
 }
 
 function toNullableText(value: unknown): string | null {
@@ -263,6 +279,34 @@ function parseJsonArray(value: unknown): string[] {
     return parsed.filter((entry): entry is string => typeof entry === 'string' && entry.trim().length > 0);
   } catch {
     return [];
+  }
+}
+
+function parseNextRunWorkout(value: unknown): SessionNextRunWorkout | null {
+  if (typeof value !== 'string' || !value.trim()) return null;
+
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+
+    const type = (parsed as { type?: unknown }).type;
+    const blocks = (parsed as { blocks?: unknown }).blocks;
+
+    if (typeof type !== 'string' || !type.trim() || !Array.isArray(blocks)) return null;
+
+    const normalizedBlocks = blocks
+      .filter((entry): entry is string => typeof entry === 'string')
+      .map((entry) => entry.trimEnd())
+      .filter((entry) => entry.trim());
+
+    if (normalizedBlocks.length === 0) return null;
+
+    return {
+      type: type.trim(),
+      blocks: normalizedBlocks,
+    };
+  } catch {
+    return null;
   }
 }
 
@@ -318,7 +362,7 @@ function mapSession(db: SqliteDatabase, coreRow: Record<string, unknown>): Store
   const aiRow = db.prepare(`
     SELECT signal_title, signal_paragraphs_json, carry_forward, next_run_title, next_run_summary,
            next_run_duration_min, next_run_duration_max, next_run_pace_min_sec_per_km,
-           next_run_pace_max_sec_per_km, week_title, week_summary, model_name,
+           next_run_pace_max_sec_per_km, next_run_workout_json, week_title, week_summary, model_name,
            prompt_version, generated_at
     FROM session_ai
     WHERE session_id = ?
@@ -356,6 +400,7 @@ function mapSession(db: SqliteDatabase, coreRow: Record<string, unknown>): Store
       nextRunDurationMax: aiRow && typeof aiRow.next_run_duration_max === 'number' ? aiRow.next_run_duration_max : null,
       nextRunPaceMinSecPerKm: aiRow && typeof aiRow.next_run_pace_min_sec_per_km === 'number' ? aiRow.next_run_pace_min_sec_per_km : null,
       nextRunPaceMaxSecPerKm: aiRow && typeof aiRow.next_run_pace_max_sec_per_km === 'number' ? aiRow.next_run_pace_max_sec_per_km : null,
+      nextRunWorkout: parseNextRunWorkout(aiRow?.next_run_workout_json),
       weekTitle: aiRow && typeof aiRow.week_title === 'string' ? aiRow.week_title : '',
       weekSummary: aiRow && typeof aiRow.week_summary === 'string' ? aiRow.week_summary : '',
       modelName: aiRow && typeof aiRow.model_name === 'string' ? aiRow.model_name : null,
@@ -548,9 +593,9 @@ export function saveStoredSession(input: PersistedSessionInput): StoredSession {
       INSERT INTO session_ai (
         session_id, signal_title, signal_paragraphs_json, carry_forward, next_run_title,
         next_run_summary, next_run_duration_min, next_run_duration_max,
-        next_run_pace_min_sec_per_km, next_run_pace_max_sec_per_km, week_title,
+        next_run_pace_min_sec_per_km, next_run_pace_max_sec_per_km, next_run_workout_json, week_title,
         week_summary, model_name, prompt_version, generated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(session_id) DO UPDATE SET
         signal_title = excluded.signal_title,
         signal_paragraphs_json = excluded.signal_paragraphs_json,
@@ -561,6 +606,7 @@ export function saveStoredSession(input: PersistedSessionInput): StoredSession {
         next_run_duration_max = excluded.next_run_duration_max,
         next_run_pace_min_sec_per_km = excluded.next_run_pace_min_sec_per_km,
         next_run_pace_max_sec_per_km = excluded.next_run_pace_max_sec_per_km,
+        next_run_workout_json = excluded.next_run_workout_json,
         week_title = excluded.week_title,
         week_summary = excluded.week_summary,
         model_name = excluded.model_name,
@@ -577,6 +623,7 @@ export function saveStoredSession(input: PersistedSessionInput): StoredSession {
       input.ai.nextRunDurationMax,
       input.ai.nextRunPaceMinSecPerKm,
       input.ai.nextRunPaceMaxSecPerKm,
+      input.ai.nextRunWorkout ? JSON.stringify(input.ai.nextRunWorkout) : null,
       toNullableText(input.ai.weekTitle),
       toNullableText(input.ai.weekSummary),
       toNullableText(input.ai.modelName),

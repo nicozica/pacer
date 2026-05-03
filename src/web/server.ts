@@ -99,12 +99,14 @@ function summarizeAiInput(ai: SaveSessionInput['ai'] | undefined): Record<string
       ai.carryForward ||
       ai.nextRunTitle ||
       ai.nextRunSummary ||
+      ai.nextRunWorkout ||
       ai.weekTitle ||
       ai.weekSummary,
     ),
     signalTitle: ai.signalTitle || '',
     signalParagraphCount: paragraphs,
     nextRunTitle: ai.nextRunTitle || '',
+    nextRunWorkout: ai.nextRunWorkout?.type || '',
     weekTitle: ai.weekTitle || '',
   };
 }
