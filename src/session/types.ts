@@ -227,12 +227,32 @@ export interface SessionExportArchiveList {
   sessions: SessionExportArchiveItem[];
 }
 
+export interface ActivityContextMetric {
+  label: 'duration' | 'avgHr' | 'calories' | 'distance' | 'movingTime';
+  value: number | null;
+}
+
+export interface ActivityContextItem {
+  sourceActivityId: number | null;
+  title: string;
+  sport: string;
+  startDateLocal: string;
+  metrics: ActivityContextMetric[];
+}
+
+export interface ActivityContextExport {
+  generatedAt: string;
+  latestTraining: ActivityContextItem | null;
+  latestRide: ActivityContextItem | null;
+}
+
 export interface PublishArtifacts {
   latestSession: SessionExportLatest | null;
   publishedSessions: SessionExportLatest[];
   nextRun: SessionExportNextRun | null;
   weeklySummary: WeeklySnapshotRecord | null;
   archiveList: SessionExportArchiveList;
+  activityContext: ActivityContextExport;
   generatedAt: string;
 }
 

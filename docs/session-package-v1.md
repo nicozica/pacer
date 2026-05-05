@@ -117,3 +117,8 @@ When Pacer loads or saves a session in the editor, the effective package is:
 - `archive-list.json`
 
 These are local Pacer outputs only. `run.nico.ar` can consume them later, but Pacer does not write into that repo.
+
+Dashboard summary guidance:
+- `next-run.json.summary` should stay compact: 1-2 short sentences, about 120-180 characters, focused on intent rather than step-by-step structure.
+- `weekly-summary.json.summary` should also stay compact and fit naturally in about 3 visual lines on `run.nico.ar`.
+- When `nextRunWorkout` exists, warm-up / reps / cooldown details belong in `nextRunWorkout.blocks`, not duplicated in `nextRunSummary`.

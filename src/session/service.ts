@@ -28,6 +28,8 @@ import {
   upsertWeeklySnapshot,
 } from './storage';
 import {
+  ActivityContextExport,
+  ActivityContextItem,
   EditorBootstrap,
   EditorSession,
   PublishArtifacts,
@@ -53,6 +55,7 @@ import {
 import { buildRouteMetadata } from './route';
 import { ensureDir } from '../utils/storage';
 import { deployRunSite } from './deploy';
+import { deriveActivityContext, isRideActivity, isTrainingActivity } from '../activity-context';
 
 const DAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const SESSION_TYPES = new Set([
@@ -117,6 +120,52 @@ function formatDuration(seconds: number | null): string {
   }
 
   return `${minutes}m ${remainingSeconds.toString().padStart(2, '0')}s`;
+}
+
+function toActivityContextTraining(activity: SourceActivity | null | undefined): ActivityContextItem | null {
+  if (!activity) {
+    return null;
+  }
+
+  return {
+    sourceActivityId: activity.id ?? null,
+    title: activity.name,
+    sport: getActivityType(activity),
+    startDateLocal: activity.start_date_local || activity.start_date,
+    metrics: [
+      { label: 'duration', value: activity.moving_time ?? null },
+      { label: 'avgHr', value: activity.average_heartrate ?? null },
+      { label: 'calories', value: null },
+    ],
+  };
+}
+
+function toActivityContextRide(activity: SourceActivity | null | undefined): ActivityContextItem | null {
+  if (!activity) {
+    return null;
+  }
+
+  return {
+    sourceActivityId: activity.id ?? null,
+    title: activity.name,
+    sport: getActivityType(activity),
+    startDateLocal: activity.start_date_local || activity.start_date,
+    metrics: [
+      { label: 'distance', value: activity.distance ?? null },
+      { label: 'movingTime', value: activity.moving_time ?? null },
+      { label: 'avgHr', value: activity.average_heartrate ?? null },
+    ],
+  };
+}
+
+function buildActivityContextExport(bundle: ActivityBundle | null): ActivityContextExport {
+  const { latestTraining, latestRide } = deriveActivityContext(bundle);
+
+  return {
+    generatedAt: new Date().toISOString(),
+    latestTraining: toActivityContextTraining(latestTraining),
+    latestRide: toActivityContextRide(latestRide),
+  };
 }
 
 function formatPaceFromSeconds(secPerKm: number | null): string | null {
@@ -356,6 +405,70 @@ function deriveWeekSummary(totalKm: number, totalRuns: number): string {
   return `${totalKm.toFixed(1)} km across ${totalRuns} run${totalRuns === 1 ? '' : 's'}. Enough structure to read the week clearly without overcomplicating it.`;
 }
 
+function splitIntoSentences(text: string): string[] {
+  return text
+    .replace(/\s+/g, ' ')
+    .trim()
+    .match(/[^.!?]+[.!?]?/g)
+    ?.map((sentence) => sentence.trim())
+    .filter(Boolean) ?? [];
+}
+
+function trimSentenceToLength(text: string, maxLength: number): string {
+  if (text.length <= maxLength) {
+    return text;
+  }
+
+  const preferredBreak = Math.max(
+    text.lastIndexOf('. ', maxLength),
+    text.lastIndexOf('; ', maxLength),
+    text.lastIndexOf(' — ', maxLength),
+    text.lastIndexOf(', ', maxLength)
+  );
+
+  const hardBreak = text.lastIndexOf(' ', maxLength);
+  const cutIndex = preferredBreak > 40 ? preferredBreak + 1 : hardBreak;
+
+  if (cutIndex <= 0) {
+    return text.slice(0, maxLength).trimEnd();
+  }
+
+  return text.slice(0, cutIndex).trimEnd().replace(/[,:;—-]+$/, '').trimEnd();
+}
+
+function ensureTerminalPunctuation(text: string): string {
+  if (!text) return text;
+  return /[.!?]$/.test(text) ? text : `${text}.`;
+}
+
+function compactWeekSummary(summary: string): string {
+  const normalized = sanitizeText(summary);
+  if (!normalized) return '';
+
+  const candidate = splitIntoSentences(normalized).slice(0, 2).join(' ');
+  return ensureTerminalPunctuation(trimSentenceToLength(candidate || normalized, 165));
+}
+
+function compactNextRunSummary(summary: string, workout: SessionNextRunWorkout | null): string {
+  const normalized = sanitizeText(summary);
+  if (!normalized) return '';
+
+  let candidate = normalized;
+
+  if (workout) {
+    candidate = candidate.replace(/:\s*[^.!?]+(?=[.!?]|$)/, '.');
+    candidate = candidate.replace(
+      /\s+around\s+\d{1,2}:\d{2}\s*(?:to|-|–)\s*\d{1,2}:\d{2}\s+per\s+[a-z]+(?:metre|meter)?\s*[—-]?\s*/i,
+      ' '
+    );
+  }
+
+  const sentences = splitIntoSentences(candidate);
+  const chosen = sentences.slice(0, 2).join(' ');
+
+  return ensureTerminalPunctuation(trimSentenceToLength(chosen || candidate, 175));
+}
+
 function buildWeeklySnapshotFromSessions(sessions: StoredSession[]): WeeklySnapshotRecord | null {
   if (sessions.length === 0) return null;
 
@@ -387,7 +500,7 @@ function buildWeeklySnapshotFromSessions(sessions: StoredSession[]): WeeklySnaps
     totalRuns,
     totalTimeS,
     title: aiWeekTitle || deriveWeekTitle(totalKm, totalRuns),
-    summary: aiWeekSummary || deriveWeekSummary(totalKm, totalRuns),
+    summary: compactWeekSummary(aiWeekSummary || deriveWeekSummary(totalKm, totalRuns)),
     bars: buildWeeklyBars(latestDate, windowSessions),
   };
 }
@@ -423,14 +536,14 @@ function buildLatestExport(session: StoredSession): SessionExportLatest {
       signalParagraphs: session.ai.signalParagraphs,
       carryForward: session.ai.carryForward,
       nextRunTitle: session.ai.nextRunTitle,
-      nextRunSummary: session.ai.nextRunSummary,
+      nextRunSummary: compactNextRunSummary(session.ai.nextRunSummary, session.ai.nextRunWorkout),
       nextRunDurationMin: session.ai.nextRunDurationMin,
       nextRunDurationMax: session.ai.nextRunDurationMax,
       nextRunPaceMinSecPerKm: session.ai.nextRunPaceMinSecPerKm,
       nextRunPaceMaxSecPerKm: session.ai.nextRunPaceMaxSecPerKm,
       nextRunWorkout: session.ai.nextRunWorkout,
       weekTitle: session.ai.weekTitle,
-      weekSummary: session.ai.weekSummary,
+      weekSummary: compactWeekSummary(session.ai.weekSummary),
     },
     laps: session.laps,
     updatedAt: session.core.updatedAt,
@@ -444,7 +557,7 @@ function buildNextRunExport(session: StoredSession): SessionExportNextRun | null
     fromSessionId: session.core.id,
     sessionDate: session.core.sessionDate,
     title: session.ai.nextRunTitle,
-    summary: session.ai.nextRunSummary,
+    summary: compactNextRunSummary(session.ai.nextRunSummary, session.ai.nextRunWorkout),
     durationMin: session.ai.nextRunDurationMin,
     durationMax: session.ai.nextRunDurationMax,
     paceMinSecPerKm: session.ai.nextRunPaceMinSecPerKm,
@@ -516,19 +629,21 @@ function sanitizeFilesInput(input: SaveSessionInput['files']): SessionFilesInput
 }
 
 function sanitizeAiInput(input: SaveSessionInput['ai']): SessionAIInput {
+  const nextRunWorkout = sanitizeNextRunWorkout(input?.nextRunWorkout);
+
   return {
     signalTitle: sanitizeText(input?.signalTitle),
     signalParagraphs: sanitizeParagraphs(input?.signalParagraphs),
     carryForward: sanitizeText(input?.carryForward),
     nextRunTitle: sanitizeText(input?.nextRunTitle),
-    nextRunSummary: sanitizeText(input?.nextRunSummary),
+    nextRunSummary: compactNextRunSummary(sanitizeText(input?.nextRunSummary), nextRunWorkout),
     nextRunDurationMin: sanitizeOptionalNumber(input?.nextRunDurationMin),
     nextRunDurationMax: sanitizeOptionalNumber(input?.nextRunDurationMax),
     nextRunPaceMinSecPerKm: sanitizeOptionalNumber(input?.nextRunPaceMinSecPerKm),
     nextRunPaceMaxSecPerKm: sanitizeOptionalNumber(input?.nextRunPaceMaxSecPerKm),
-    nextRunWorkout: sanitizeNextRunWorkout(input?.nextRunWorkout),
+    nextRunWorkout,
     weekTitle: sanitizeText(input?.weekTitle),
-    weekSummary: sanitizeText(input?.weekSummary),
+    weekSummary: compactWeekSummary(sanitizeText(input?.weekSummary)),
   };
 }
 
@@ -869,6 +984,7 @@ export async function saveSession(input: SaveSessionInput, options: SaveSessionO
 export function publishSnapshots(): PublishArtifacts {
   initSessionStore();
   const publishedSessions = listPublishedSessions();
+  const activityBundle = readActivityBundle();
   const latestSession = publishedSessions[0] ?? null;
   const publishedSessionExports = publishedSessions.map((session) => buildLatestExport(session));
   const latestExport = latestSession ? buildLatestExport(latestSession) : null;
@@ -876,6 +992,7 @@ export function publishSnapshots(): PublishArtifacts {
   const snapshotDraft = buildWeeklySnapshotFromSessions(publishedSessions);
   const weeklySummary = snapshotDraft ? upsertWeeklySnapshot(snapshotDraft) : null;
   const archiveList = buildArchiveList(publishedSessions.slice(1));
+  const activityContext = buildActivityContextExport(activityBundle);
   const generatedAt = new Date().toISOString();
 
   writeJsonFile('latest-session.json', latestExport);
@@ -883,6 +1000,7 @@ export function publishSnapshots(): PublishArtifacts {
   writeJsonFile('next-run.json', nextRunExport);
   writeJsonFile('weekly-summary.json', weeklySummary);
   writeJsonFile('archive-list.json', archiveList);
+  writeJsonFile('activity-context.json', activityContext);
 
   return {
     latestSession: latestExport,
@@ -890,6 +1008,7 @@ export function publishSnapshots(): PublishArtifacts {
     nextRun: nextRunExport,
     weeklySummary,
     archiveList,
+    activityContext,
     generatedAt,
   };
 }

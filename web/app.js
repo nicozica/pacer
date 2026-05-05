@@ -630,7 +630,12 @@ async function refreshFromStrava(options = {}) {
   }
 }
 
-function activityHtml(activity) {
+function activityHtml(activity, options = {}) {
+  const {
+    hideSpeed = false,
+    hideElevation = false,
+  } = options;
+
   if (!activity) return '<span class="empty">None on record</span>';
 
   const rows = [
@@ -641,9 +646,9 @@ function activityHtml(activity) {
   if (activity.distanceKm) rows.push(`Distance: ${escapeHtml(activity.distanceKm)} km`);
   rows.push(`Duration: ${escapeHtml(activity.durationFormatted)}`);
   if (activity.pace) rows.push(`Pace: ${escapeHtml(activity.pace)}`);
-  if (activity.speedKmh) rows.push(`Speed: ${escapeHtml(activity.speedKmh)} km/h`);
+  if (!hideSpeed && activity.speedKmh) rows.push(`Speed: ${escapeHtml(activity.speedKmh)} km/h`);
   if (activity.avgHR) rows.push(`HR: ${escapeHtml(activity.avgHR)} avg${activity.maxHR ? ` / ${escapeHtml(activity.maxHR)} max` : ''} bpm`);
-  if (activity.elevationM) rows.push(`Elevation: +${escapeHtml(activity.elevationM)} m`);
+  if (!hideElevation && activity.elevationM) rows.push(`Elevation: +${escapeHtml(activity.elevationM)} m`);
 
   return rows.join('<br>');
 }
@@ -660,7 +665,10 @@ function renderData() {
 
   document.getElementById('latest-content').innerHTML = activityHtml(latestActivity);
   document.getElementById('run-content').innerHTML = activityHtml(latestRun);
-  document.getElementById('ride-content').innerHTML = activityHtml(latestRide);
+  document.getElementById('ride-content').innerHTML = activityHtml(latestRide, {
+    hideSpeed: true,
+    hideElevation: true,
+  });
 
   const totalHours = Math.floor(last7days.totalTimeMin / 60);
   const totalMinutes = last7days.totalTimeMin % 60;

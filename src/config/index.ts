@@ -34,7 +34,7 @@ export const config = {
   stravaClientSecret: process.env.STRAVA_CLIENT_SECRET ?? '',
   stravaRedirectUri: process.env.STRAVA_REDIRECT_URI ?? 'http://localhost',
   stravaTokensFile: process.env.STRAVA_TOKENS_FILE ?? path.join(process.env.STORAGE_DIR ?? 'storage', 'auth', 'strava-tokens.json'),
-  stravaActivitiesPerPage: parseInt(process.env.STRAVA_ACTIVITIES_PER_PAGE ?? '30', 10),
+  stravaActivitiesPerPage: parseInt(process.env.STRAVA_ACTIVITIES_PER_PAGE ?? '100', 10),
 
   // Web server settings
   webHost: process.env.WEB_HOST ?? '127.0.0.1',

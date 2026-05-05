@@ -28,7 +28,10 @@ It is intentionally small. The goal is not to automate coaching logic yet, but t
   Short label for the next suggested run.
 
 - `next_run_summary`
-  One short paragraph describing the next run intent.
+  One short dashboard paragraph describing the next run intent.
+  Keep it to 1-2 short sentences, roughly 120-180 characters max.
+  It should fit naturally in about 3 visual lines on `run.nico.ar`.
+  Do not repeat the detailed warm-up / reps / cooldown structure here when `next_run_workout` is present.
 
 - `next_run_duration_min`
   Minimum suggested duration in minutes.
@@ -50,7 +53,8 @@ It is intentionally small. The goal is not to automate coaching logic yet, but t
   Short weekly headline.
 
 - `week_summary`
-  Short weekly paragraph.
+  Short weekly dashboard paragraph.
+  Keep it to 1-2 short sentences, roughly 120-180 characters max, and make sure it fits naturally in about 3 visual lines on `run.nico.ar`.
 
 ## Example
 

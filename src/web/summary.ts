@@ -1,31 +1,6 @@
-import * as fs from 'fs';
-import * as path from 'path';
 import { config } from '../config';
-
-interface RawActivity {
-  id?: number;
-  name: string;
-  sport_type: string;
-  type: string;
-  start_date: string;       // UTC ISO string, used for filtering
-  start_date_local: string; // local time without timezone, used for display
-  start_latlng?: number[];
-  distance: number;
-  moving_time: number;
-  total_elevation_gain: number;
-  average_heartrate?: number;
-  max_heartrate?: number;
-  average_speed: number;
-}
-
-interface RawLap {
-  lap_index?: number;
-  name?: string;
-  distance?: number;
-  moving_time?: number;
-  average_speed?: number;
-  average_heartrate?: number;
-}
+import { deriveActivityContext, isRideActivity } from '../activity-context';
+import { ActivityBundle, SourceActivity, SourceLap, getActivityType, isRunLike, readActivityBundle } from '../session/source';
 
 export interface ActivityCard {
   sourceActivityId: number | null;
@@ -74,27 +49,12 @@ export interface Summary {
   weatherDefaultLon: number | null;
 }
 
-const RUN_TYPES = new Set(['Run', 'TrailRun', 'VirtualRun']);
-const RIDE_TYPES = new Set(['Ride', 'VirtualRide']);
-
-function getActivityType(a: RawActivity): string {
-  return a.sport_type || a.type || '';
-}
-
-function isRunType(type: string): boolean {
-  return RUN_TYPES.has(type);
-}
-
-function isRideType(type: string): boolean {
-  return RIDE_TYPES.has(type);
-}
-
 function toTimestamp(isoString: string): number {
   const ts = Date.parse(isoString);
   return Number.isNaN(ts) ? 0 : ts;
 }
 
-function getActivityCoords(a: RawActivity): { startLat: number | null; startLon: number | null } {
+function getActivityCoords(a: SourceActivity): { startLat: number | null; startLon: number | null } {
   if (!Array.isArray(a.start_latlng) || a.start_latlng.length < 2) {
     return { startLat: null, startLon: null };
   }
@@ -131,7 +91,7 @@ function averageTempFromStream(input: unknown): number | null {
   return parseFloat(avg.toFixed(1));
 }
 
-function toLapCard(lap: RawLap, index: number): LapCard {
+function toLapCard(lap: SourceLap, index: number): LapCard {
   const lapNumber = typeof lap.lap_index === 'number'
     ? (lap.lap_index > 0 ? lap.lap_index : lap.lap_index + 1)
     : index + 1;
@@ -151,7 +111,7 @@ function toLapCard(lap: RawLap, index: number): LapCard {
   };
 }
 
-function toCard(a: RawActivity): ActivityCard {
+function toCard(a: SourceActivity): ActivityCard {
   const type = getActivityType(a);
   const { startLat, startLon } = getActivityCoords(a);
 
@@ -167,16 +127,16 @@ function toCard(a: RawActivity): ActivityCard {
     durationFormatted: formatDuration(a.moving_time),
     avgHR: a.average_heartrate ? Math.round(a.average_heartrate) : null,
     maxHR: a.max_heartrate ? Math.round(a.max_heartrate) : null,
-    pace: isRunType(type) ? formatPace(a.average_speed) : null,
-    speedKmh: isRideType(type) && a.average_speed > 0 ? (a.average_speed * 3.6).toFixed(1) : null,
+    pace: isRunLike(a) ? formatPace(a.average_speed) : null,
+    speedKmh: isRideActivity(a) && a.average_speed > 0 ? (a.average_speed * 3.6).toFixed(1) : null,
     elevationM: a.total_elevation_gain > 0 ? Math.round(a.total_elevation_gain) : null,
   };
 }
 
 export function buildSummary(): Summary {
-  const filePath = path.join(config.storageDir, 'json', 'activities.latest.json');
+  const bundle = readActivityBundle();
 
-  if (!fs.existsSync(filePath)) {
+  if (!bundle) {
     return {
       fetchedAt: '',
       latestActivity: null,
@@ -190,25 +150,25 @@ export function buildSummary(): Summary {
     };
   }
 
-  const raw = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
-  const activities: RawActivity[] = raw.activities ?? [];
-  const rawLaps: RawLap[] = Array.isArray(raw.latest_activity_laps) ? raw.latest_activity_laps : [];
-  const fetchedAt: string = raw.fetched_at ?? '';
+  const activities: SourceActivity[] = bundle.activities ?? [];
+  const rawLaps: SourceLap[] = Array.isArray(bundle.latest_activity_laps) ? bundle.latest_activity_laps : [];
+  const fetchedAt: string = bundle.fetched_at ?? '';
   const sortedActivities = [...activities].sort((a, b) => toTimestamp(b.start_date) - toTimestamp(a.start_date));
-  const latestActivityTempC = averageTempFromStream(raw.latest_activity_temp_stream);
+  const latestActivityTempC = averageTempFromStream(bundle.latest_activity_temp_stream);
   const latestActivityLaps = rawLaps.map((lap, index) => toLapCard(lap, index));
+  const derivedContext = deriveActivityContext(bundle);
 
   const sevenDaysAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
 
   const latestActivity = sortedActivities.length > 0 ? toCard(sortedActivities[0]) : null;
-  const rawRun = sortedActivities.find((a) => isRunType(getActivityType(a)));
-  const rawRide = sortedActivities.find((a) => isRideType(getActivityType(a)));
+  const rawRun = sortedActivities.find((a) => isRunLike(a));
+  const rawRide = derivedContext.latestRide;
   const latestRun = rawRun ? toCard(rawRun) : null;
   const latestRide = rawRide ? toCard(rawRide) : null;
 
   const recent = sortedActivities.filter((a) => toTimestamp(a.start_date) >= sevenDaysAgo);
-  const runs7 = recent.filter((a) => isRunType(getActivityType(a)));
-  const rides7 = recent.filter((a) => isRideType(getActivityType(a)));
+  const runs7 = recent.filter((a) => isRunLike(a));
+  const rides7 = recent.filter((a) => isRideActivity(a));
 
   const last7days: WeeklySummary = {
     count: recent.length,
