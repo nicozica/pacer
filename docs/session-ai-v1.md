@@ -32,12 +32,18 @@ It is intentionally small. The goal is not to automate coaching logic yet, but t
   Keep it to 1-2 short sentences, roughly 120-180 characters max.
   It should fit naturally in about 3 visual lines on `run.nico.ar`.
   Do not repeat the detailed warm-up / reps / cooldown structure here when `next_run_workout` is present.
+  Do not include exact rep counts, warm-up steps, cooldown steps, or detailed pace ranges if they already live in `next_run_workout.blocks`.
+  Use this field for the session intent only: what kind of run it is and how it should feel.
 
 - `next_run_duration_min`
   Minimum suggested duration in minutes.
 
 - `next_run_duration_max`
   Maximum suggested duration in minutes.
+
+- `next_run_distance_km`
+  Optional estimated distance for the next run, in kilometers.
+  Use a single practical value like `14.0`, not a min/max range.
 
 - `next_run_pace_min_sec_per_km`
   Slower edge of the pace guidance, in seconds per kilometer.
@@ -55,6 +61,7 @@ It is intentionally small. The goal is not to automate coaching logic yet, but t
 - `week_summary`
   Short weekly dashboard paragraph.
   Keep it to 1-2 short sentences, roughly 120-180 characters max, and make sure it fits naturally in about 3 visual lines on `run.nico.ar`.
+  Prefer one compact factual line plus one short interpretation line, rather than a full coaching paragraph.
 
 ## Example
 
@@ -70,6 +77,7 @@ It is intentionally small. The goal is not to automate coaching logic yet, but t
   "nextRunSummary": "Keep the effort quiet, restore rhythm, and arrive fresh for the next quality day.",
   "nextRunDurationMin": 40,
   "nextRunDurationMax": 45,
+  "nextRunDistanceKm": 8.0,
   "nextRunPaceMinSecPerKm": 400,
   "nextRunPaceMaxSecPerKm": 425,
   "nextRunWorkout": {

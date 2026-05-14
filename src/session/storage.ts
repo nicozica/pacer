@@ -29,6 +29,7 @@ interface PersistedSessionInput {
     nextRunSummary: string;
     nextRunDurationMin: number | null;
     nextRunDurationMax: number | null;
+    nextRunDistanceKm: number | null;
     nextRunPaceMinSecPerKm: number | null;
     nextRunPaceMaxSecPerKm: number | null;
     nextRunWorkout: SessionNextRunWorkout | null;
@@ -265,6 +266,20 @@ function migrate(db: SqliteDatabase): void {
 
     migrationV4();
   }
+
+  if (currentVersion < 5) {
+    const migrationV5 = db.transaction(() => {
+      if (!columnExists(db, 'session_ai', 'next_run_distance_km')) {
+        db.exec(`
+          ALTER TABLE session_ai ADD COLUMN next_run_distance_km REAL;
+        `);
+      }
+
+      db.pragma('user_version = 5');
+    });
+
+    migrationV5();
+  }
 }
 
 function toNullableText(value: unknown): string | null {
@@ -361,7 +376,7 @@ function mapSession(db: SqliteDatabase, coreRow: Record<string, unknown>): Store
 
   const aiRow = db.prepare(`
     SELECT signal_title, signal_paragraphs_json, carry_forward, next_run_title, next_run_summary,
-           next_run_duration_min, next_run_duration_max, next_run_pace_min_sec_per_km,
+           next_run_duration_min, next_run_duration_max, next_run_distance_km, next_run_pace_min_sec_per_km,
            next_run_pace_max_sec_per_km, next_run_workout_json, week_title, week_summary, model_name,
            prompt_version, generated_at
     FROM session_ai
@@ -398,6 +413,7 @@ function mapSession(db: SqliteDatabase, coreRow: Record<string, unknown>): Store
       nextRunSummary: aiRow && typeof aiRow.next_run_summary === 'string' ? aiRow.next_run_summary : '',
       nextRunDurationMin: aiRow && typeof aiRow.next_run_duration_min === 'number' ? aiRow.next_run_duration_min : null,
       nextRunDurationMax: aiRow && typeof aiRow.next_run_duration_max === 'number' ? aiRow.next_run_duration_max : null,
+      nextRunDistanceKm: aiRow && typeof aiRow.next_run_distance_km === 'number' ? aiRow.next_run_distance_km : null,
       nextRunPaceMinSecPerKm: aiRow && typeof aiRow.next_run_pace_min_sec_per_km === 'number' ? aiRow.next_run_pace_min_sec_per_km : null,
       nextRunPaceMaxSecPerKm: aiRow && typeof aiRow.next_run_pace_max_sec_per_km === 'number' ? aiRow.next_run_pace_max_sec_per_km : null,
       nextRunWorkout: parseNextRunWorkout(aiRow?.next_run_workout_json),
@@ -592,10 +608,10 @@ export function saveStoredSession(input: PersistedSessionInput): StoredSession {
     db.prepare(`
       INSERT INTO session_ai (
         session_id, signal_title, signal_paragraphs_json, carry_forward, next_run_title,
-        next_run_summary, next_run_duration_min, next_run_duration_max,
+        next_run_summary, next_run_duration_min, next_run_duration_max, next_run_distance_km,
         next_run_pace_min_sec_per_km, next_run_pace_max_sec_per_km, next_run_workout_json, week_title,
         week_summary, model_name, prompt_version, generated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(session_id) DO UPDATE SET
         signal_title = excluded.signal_title,
         signal_paragraphs_json = excluded.signal_paragraphs_json,
@@ -604,6 +620,7 @@ export function saveStoredSession(input: PersistedSessionInput): StoredSession {
         next_run_summary = excluded.next_run_summary,
         next_run_duration_min = excluded.next_run_duration_min,
         next_run_duration_max = excluded.next_run_duration_max,
+        next_run_distance_km = excluded.next_run_distance_km,
         next_run_pace_min_sec_per_km = excluded.next_run_pace_min_sec_per_km,
         next_run_pace_max_sec_per_km = excluded.next_run_pace_max_sec_per_km,
         next_run_workout_json = excluded.next_run_workout_json,
@@ -621,6 +638,7 @@ export function saveStoredSession(input: PersistedSessionInput): StoredSession {
       toNullableText(input.ai.nextRunSummary),
       input.ai.nextRunDurationMin,
       input.ai.nextRunDurationMax,
+      input.ai.nextRunDistanceKm,
       input.ai.nextRunPaceMinSecPerKm,
       input.ai.nextRunPaceMaxSecPerKm,
       input.ai.nextRunWorkout ? JSON.stringify(input.ai.nextRunWorkout) : null,

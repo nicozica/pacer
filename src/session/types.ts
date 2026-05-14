@@ -20,6 +20,7 @@ export interface SessionAIInput {
   nextRunSummary: string;
   nextRunDurationMin: number | null;
   nextRunDurationMax: number | null;
+  nextRunDistanceKm: number | null;
   nextRunPaceMinSecPerKm: number | null;
   nextRunPaceMaxSecPerKm: number | null;
   nextRunWorkout: SessionNextRunWorkout | null;
@@ -182,6 +183,7 @@ export interface SessionExportNextRun {
   summary: string;
   durationMin: number | null;
   durationMax: number | null;
+  distanceKm: number | null;
   paceMinSecPerKm: number | null;
   paceMaxSecPerKm: number | null;
   workout?: SessionNextRunWorkout;
@@ -228,7 +230,7 @@ export interface SessionExportArchiveList {
 }
 
 export interface ActivityContextMetric {
-  label: 'duration' | 'avgHr' | 'calories' | 'distance' | 'movingTime';
+  label: 'duration' | 'avgHr' | 'maxHr' | 'distance' | 'movingTime';
   value: number | null;
 }
 
@@ -246,6 +248,33 @@ export interface ActivityContextExport {
   latestRide: ActivityContextItem | null;
 }
 
+export interface ActivityLogItem {
+  id: number | null;
+  source: 'strava';
+  title: string;
+  type: string;
+  sportType: string | null;
+  startDate: string;
+  startDateLocal: string | null;
+  distanceM: number | null;
+  movingTimeS: number | null;
+  elapsedTimeS: number | null;
+  averageHeartrate: number | null;
+  maxHeartrate: number | null;
+  calories: number | null;
+  elevationGainM: number | null;
+  paceSecPerKm: number | null;
+  averageSpeedMps: number | null;
+  routeSvgPoints: string | null;
+  stravaUrl: string | null;
+}
+
+export interface ActivityLogExport {
+  generatedAt: string;
+  count: number;
+  activities: ActivityLogItem[];
+}
+
 export interface PublishArtifacts {
   latestSession: SessionExportLatest | null;
   publishedSessions: SessionExportLatest[];
@@ -253,6 +282,7 @@ export interface PublishArtifacts {
   weeklySummary: WeeklySnapshotRecord | null;
   archiveList: SessionExportArchiveList;
   activityContext: ActivityContextExport;
+  activityLog: ActivityLogExport;
   generatedAt: string;
 }
 

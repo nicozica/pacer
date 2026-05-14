@@ -173,6 +173,7 @@ function blankAiInput() {
     nextRunSummary: '',
     nextRunDurationMin: null,
     nextRunDurationMax: null,
+    nextRunDistanceKm: null,
     nextRunPaceMinSecPerKm: null,
     nextRunPaceMaxSecPerKm: null,
     nextRunWorkout: null,
@@ -217,6 +218,7 @@ function serializeAiInput(ai) {
     nextRunSummary: ai.nextRunSummary,
     nextRunDurationMin: ai.nextRunDurationMin,
     nextRunDurationMax: ai.nextRunDurationMax,
+    nextRunDistanceKm: ai.nextRunDistanceKm,
     nextRunPaceMinSecPerKm: ai.nextRunPaceMinSecPerKm,
     nextRunPaceMaxSecPerKm: ai.nextRunPaceMaxSecPerKm,
     nextRunWorkout: ai.nextRunWorkout,
@@ -317,16 +319,42 @@ function normalizeNextRunWorkout(value) {
   return { type, blocks };
 }
 
+function getJsonErrorLocation(text, position) {
+  if (!Number.isInteger(position) || position < 0) return '';
+
+  const beforeError = text.slice(0, position);
+  const line = beforeError.split('\n').length;
+  const lastNewline = beforeError.lastIndexOf('\n');
+  const column = position - lastNewline;
+
+  return `line ${line}, column ${column}`;
+}
+
+function formatJsonParseError(err, text) {
+  const message = err instanceof Error && err.message
+    ? err.message
+    : 'Unknown JSON parse error';
+  const positionMatch = message.match(/position (\d+)/);
+  const location = positionMatch
+    ? getJsonErrorLocation(text, Number(positionMatch[1]))
+    : '';
+
+  if (!location || /\bline\b/i.test(message)) {
+    return `JSON could not be parsed: ${message}`;
+  }
+
+  return `JSON could not be parsed at ${location}: ${message}`;
+}
+
 function parseAiJsonText(text) {
-  const trimmed = text.trim();
-  if (!trimmed) return blankAiInput();
+  if (!text.trim()) return blankAiInput();
 
   let payload;
 
   try {
-    payload = JSON.parse(trimmed);
-  } catch {
-    throw new Error('JSON could not be parsed.');
+    payload = JSON.parse(text);
+  } catch (err) {
+    throw new Error(formatJsonParseError(err, text));
   }
 
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
@@ -341,6 +369,7 @@ function parseAiJsonText(text) {
     nextRunSummary: normalizeAiText(readAiJsonField(payload, 'nextRunSummary'), 'nextRunSummary'),
     nextRunDurationMin: normalizeAiNumber(readAiJsonField(payload, 'nextRunDurationMin'), 'nextRunDurationMin'),
     nextRunDurationMax: normalizeAiNumber(readAiJsonField(payload, 'nextRunDurationMax'), 'nextRunDurationMax'),
+    nextRunDistanceKm: normalizeAiNumber(readAiJsonField(payload, 'nextRunDistanceKm'), 'nextRunDistanceKm'),
     nextRunPaceMinSecPerKm: normalizeAiNumber(readAiJsonField(payload, 'nextRunPaceMinSecPerKm'), 'nextRunPaceMinSecPerKm'),
     nextRunPaceMaxSecPerKm: normalizeAiNumber(readAiJsonField(payload, 'nextRunPaceMaxSecPerKm'), 'nextRunPaceMaxSecPerKm'),
     nextRunWorkout: normalizeNextRunWorkout(readAiJsonField(payload, 'nextRunWorkout')),
@@ -866,15 +895,19 @@ async function saveCurrentSession(publish) {
   const submittedAiRawText = document.getElementById('ai-json-input').value;
   const saveButton = document.getElementById(publish ? 'btn-save-publish' : 'btn-save');
   const originalText = saveButton.textContent;
-  saveButton.disabled = true;
-  saveButton.textContent = publish ? 'Publishing…' : 'Saving…';
-
-  if (publish) {
-    showNotice('Publishing run.nico.ar… Exporting snapshots, building, deploying, and verifying production.');
-  }
+  let buttonsLocked = false;
 
   try {
     const payload = collectEditorPayload();
+
+    setButtonsDisabled(true);
+    buttonsLocked = true;
+    saveButton.textContent = publish ? 'Publishing…' : 'Saving…';
+
+    if (publish) {
+      showNotice('Publishing run.nico.ar… Exporting snapshots, building, deploying, and verifying production.');
+    }
+
     console.info(`[Pacer UI] ${actionLabel} payload`, {
       sourceActivityId: payload.sourceActivityId,
       manual: payload.manual,
@@ -910,6 +943,7 @@ async function saveCurrentSession(publish) {
         showNotice(`${response.publishStatus.message}.${targetSuffix} Visible at ${visibleAt}`);
       } else {
         console.error('[Pacer UI] Publish hook reported failure', response.publishStatus);
+        hideNotice();
         syncAiImport(submittedAiRawText, {
           validMessage: 'AI JSON kept in editor after failed publish.',
           emptyMessage: 'Paste the JSON returned by ChatGPT or upload a `.json` file.',
@@ -929,9 +963,12 @@ async function saveCurrentSession(publish) {
     }
   } catch (err) {
     console.error(`[Pacer UI] ${actionLabel} threw`, err);
+    hideNotice();
     showError(err.message || 'Could not save session.');
   } finally {
-    saveButton.disabled = false;
+    if (buttonsLocked) {
+      setButtonsDisabled(false);
+    }
     saveButton.textContent = originalText;
   }
 }

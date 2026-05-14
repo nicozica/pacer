@@ -30,6 +30,8 @@ import {
 import {
   ActivityContextExport,
   ActivityContextItem,
+  ActivityLogExport,
+  ActivityLogItem,
   EditorBootstrap,
   EditorSession,
   PublishArtifacts,
@@ -97,6 +99,7 @@ function blankAI(): SessionAIInput {
     nextRunSummary: '',
     nextRunDurationMin: null,
     nextRunDurationMax: null,
+    nextRunDistanceKm: null,
     nextRunPaceMinSecPerKm: null,
     nextRunPaceMaxSecPerKm: null,
     nextRunWorkout: null,
@@ -135,7 +138,7 @@ function toActivityContextTraining(activity: SourceActivity | null | undefined):
     metrics: [
       { label: 'duration', value: activity.moving_time ?? null },
       { label: 'avgHr', value: activity.average_heartrate ?? null },
-      { label: 'calories', value: null },
+      { label: 'maxHr', value: activity.max_heartrate ?? null },
     ],
   };
 }
@@ -165,6 +168,47 @@ function buildActivityContextExport(bundle: ActivityBundle | null): ActivityCont
     generatedAt: new Date().toISOString(),
     latestTraining: toActivityContextTraining(latestTraining),
     latestRide: toActivityContextRide(latestRide),
+  };
+}
+
+function normalizeActivityNumber(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+function buildActivityLogExport(bundle: ActivityBundle | null): ActivityLogExport {
+  const activities: ActivityLogItem[] = bundle
+    ? sortActivitiesDesc(bundle.activities).map((activity) => {
+      const id = typeof activity.id === 'number' ? activity.id : null;
+      const averageSpeed = normalizeActivityNumber(activity.average_speed);
+      const route = buildRouteMetadata(activity.map?.summary_polyline || null);
+
+      return {
+        id,
+        source: 'strava',
+        title: activity.name,
+        type: activity.type || getActivityType(activity),
+        sportType: activity.sport_type ?? null,
+        startDate: activity.start_date,
+        startDateLocal: activity.start_date_local || null,
+        distanceM: normalizeActivityNumber(activity.distance),
+        movingTimeS: normalizeActivityNumber(activity.moving_time),
+        elapsedTimeS: normalizeActivityNumber(activity.elapsed_time),
+        averageHeartrate: normalizeActivityNumber(activity.average_heartrate),
+        maxHeartrate: normalizeActivityNumber(activity.max_heartrate),
+        calories: normalizeActivityNumber(activity.calories),
+        elevationGainM: normalizeActivityNumber(activity.total_elevation_gain),
+        paceSecPerKm: isRunLike(activity) && averageSpeed ? paceSecPerKmFromSpeed(averageSpeed) : null,
+        averageSpeedMps: averageSpeed,
+        routeSvgPoints: route.routeSvgPoints,
+        stravaUrl: id === null ? null : `https://www.strava.com/activities/${id}`,
+      };
+    })
+    : [];
+
+  return {
+    generatedAt: new Date().toISOString(),
+    count: activities.length,
+    activities,
   };
 }
 
@@ -351,6 +395,7 @@ function buildEditorSession(bundle: ActivityBundle, sourceActivityId: number): E
         nextRunSummary: stored.ai.nextRunSummary,
         nextRunDurationMin: stored.ai.nextRunDurationMin,
         nextRunDurationMax: stored.ai.nextRunDurationMax,
+        nextRunDistanceKm: stored.ai.nextRunDistanceKm,
         nextRunPaceMinSecPerKm: stored.ai.nextRunPaceMinSecPerKm,
         nextRunPaceMaxSecPerKm: stored.ai.nextRunPaceMaxSecPerKm,
         nextRunWorkout: stored.ai.nextRunWorkout,
@@ -406,11 +451,16 @@ function deriveWeekSummary(totalKm: number, totalRuns: number): string {
 }
 
 function splitIntoSentences(text: string): string[] {
-  return text
-    .replace(/\s+/g, ' ')
-    .trim()
+  const normalized = text.replace(/\s+/g, ' ').trim();
+  if (!normalized) {
+    return [];
+  }
+
+  const decimalSafe = normalized.replace(/(\d)\.(\d)/g, '$1__DECIMAL_DOT__$2');
+
+  return decimalSafe
     .match(/[^.!?]+[.!?]?/g)
-    ?.map((sentence) => sentence.trim())
+    ?.map((sentence) => sentence.replace(/__DECIMAL_DOT__/g, '.').trim())
     .filter(Boolean) ?? [];
 }
 
@@ -441,12 +491,53 @@ function ensureTerminalPunctuation(text: string): string {
   return /[.!?]$/.test(text) ? text : `${text}.`;
 }
 
+function stripWorkoutLeadClause(sentence: string): string {
+  return sentence.replace(/:\s*[^.!?]+(?=[.!?]|$)/, '.');
+}
+
+function stripWorkoutPaceClause(sentence: string): string {
+  return sentence
+    .replace(
+      /\s+around\s+\d{1,2}:\d{2}\s*(?:to|-|–)\s*\d{1,2}:\d{2}\s+per\s+[a-z]+(?:metre|meter)?\s*[—-]?\s*/i,
+      ' '
+    )
+    .replace(
+      /\s+around\s+\d{1,2}:\d{2}\s*(?:to|-|–)\s*\d{1,2}:\d{2}\s*\/km\s*[—-]?\s*/i,
+      ' '
+    )
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function normalizeCompactSentence(sentence: string): string {
+  return sentence
+    .replace(/\s+/g, ' ')
+    .replace(/\s+([,.;!?])/g, '$1')
+    .replace(/\.\.+/g, '.')
+    .trim();
+}
+
+function looksLikeWorkoutDetailSentence(sentence: string): boolean {
+  const normalized = sentence.toLowerCase();
+
+  const hasWorkoutVocabulary = /\b(warm ?up|cool ?down|recover(?:y|ies)|easy jog|reps?|repeat|blocks?)\b/.test(normalized);
+  const hasStructuredNumbers =
+    /\b\d+\s*(?:x|×)\s*\d+\b/.test(normalized)
+    || /\b\d+\s*(?:minutes?|mins?|min)\b/.test(normalized)
+    || /@\s*\d/.test(normalized)
+    || /\d{1,2}:\d{2}\s*(?:to|-|–)\s*\d{1,2}:\d{2}/.test(normalized)
+    || /\/km\b/.test(normalized)
+    || /\bper kilomet(?:re|er)\b/.test(normalized);
+
+  return hasWorkoutVocabulary && hasStructuredNumbers;
+}
+
 function compactWeekSummary(summary: string): string {
   const normalized = sanitizeText(summary);
   if (!normalized) return '';
 
   const candidate = splitIntoSentences(normalized).slice(0, 2).join(' ');
-  return ensureTerminalPunctuation(trimSentenceToLength(candidate || normalized, 165));
+  return ensureTerminalPunctuation(trimSentenceToLength(candidate || normalized, 150));
 }
 
 function compactNextRunSummary(summary: string, workout: SessionNextRunWorkout | null): string {
@@ -456,17 +547,21 @@ function compactNextRunSummary(summary: string, workout: SessionNextRunWorkout |
   let candidate = normalized;
 
   if (workout) {
-    candidate = candidate.replace(/:\s*[^.!?]+(?=[.!?]|$)/, '.');
-    candidate = candidate.replace(
-      /\s+around\s+\d{1,2}:\d{2}\s*(?:to|-|–)\s*\d{1,2}:\d{2}\s+per\s+[a-z]+(?:metre|meter)?\s*[—-]?\s*/i,
-      ' '
-    );
+    candidate = stripWorkoutPaceClause(stripWorkoutLeadClause(candidate));
   }
 
-  const sentences = splitIntoSentences(candidate);
-  const chosen = sentences.slice(0, 2).join(' ');
+  const sentences = splitIntoSentences(candidate)
+    .map((sentence) => normalizeCompactSentence(stripWorkoutPaceClause(stripWorkoutLeadClause(sentence))))
+    .filter(Boolean);
 
-  return ensureTerminalPunctuation(trimSentenceToLength(chosen || candidate, 175));
+  const preferredSentences = workout
+    ? sentences.filter((sentence) => !looksLikeWorkoutDetailSentence(sentence))
+    : sentences;
+
+  const chosenPool = preferredSentences.length > 0 ? preferredSentences : sentences;
+  const chosen = chosenPool.slice(0, 2).join(' ');
+
+  return ensureTerminalPunctuation(trimSentenceToLength(chosen || candidate, 155));
 }
 
 function buildWeeklySnapshotFromSessions(sessions: StoredSession[]): WeeklySnapshotRecord | null {
@@ -539,6 +634,7 @@ function buildLatestExport(session: StoredSession): SessionExportLatest {
       nextRunSummary: compactNextRunSummary(session.ai.nextRunSummary, session.ai.nextRunWorkout),
       nextRunDurationMin: session.ai.nextRunDurationMin,
       nextRunDurationMax: session.ai.nextRunDurationMax,
+      nextRunDistanceKm: session.ai.nextRunDistanceKm,
       nextRunPaceMinSecPerKm: session.ai.nextRunPaceMinSecPerKm,
       nextRunPaceMaxSecPerKm: session.ai.nextRunPaceMaxSecPerKm,
       nextRunWorkout: session.ai.nextRunWorkout,
@@ -560,6 +656,7 @@ function buildNextRunExport(session: StoredSession): SessionExportNextRun | null
     summary: compactNextRunSummary(session.ai.nextRunSummary, session.ai.nextRunWorkout),
     durationMin: session.ai.nextRunDurationMin,
     durationMax: session.ai.nextRunDurationMax,
+    distanceKm: session.ai.nextRunDistanceKm,
     paceMinSecPerKm: session.ai.nextRunPaceMinSecPerKm,
     paceMaxSecPerKm: session.ai.nextRunPaceMaxSecPerKm,
     ...(session.ai.nextRunWorkout ? { workout: session.ai.nextRunWorkout } : {}),
@@ -639,6 +736,7 @@ function sanitizeAiInput(input: SaveSessionInput['ai']): SessionAIInput {
     nextRunSummary: compactNextRunSummary(sanitizeText(input?.nextRunSummary), nextRunWorkout),
     nextRunDurationMin: sanitizeOptionalNumber(input?.nextRunDurationMin),
     nextRunDurationMax: sanitizeOptionalNumber(input?.nextRunDurationMax),
+    nextRunDistanceKm: sanitizeOptionalNumber(input?.nextRunDistanceKm),
     nextRunPaceMinSecPerKm: sanitizeOptionalNumber(input?.nextRunPaceMinSecPerKm),
     nextRunPaceMaxSecPerKm: sanitizeOptionalNumber(input?.nextRunPaceMaxSecPerKm),
     nextRunWorkout,
@@ -993,6 +1091,7 @@ export function publishSnapshots(): PublishArtifacts {
   const weeklySummary = snapshotDraft ? upsertWeeklySnapshot(snapshotDraft) : null;
   const archiveList = buildArchiveList(publishedSessions.slice(1));
   const activityContext = buildActivityContextExport(activityBundle);
+  const activityLog = buildActivityLogExport(activityBundle);
   const generatedAt = new Date().toISOString();
 
   writeJsonFile('latest-session.json', latestExport);
@@ -1001,6 +1100,7 @@ export function publishSnapshots(): PublishArtifacts {
   writeJsonFile('weekly-summary.json', weeklySummary);
   writeJsonFile('archive-list.json', archiveList);
   writeJsonFile('activity-context.json', activityContext);
+  writeJsonFile('activity-log.json', activityLog);
 
   return {
     latestSession: latestExport,
@@ -1009,6 +1109,7 @@ export function publishSnapshots(): PublishArtifacts {
     weeklySummary,
     archiveList,
     activityContext,
+    activityLog,
     generatedAt,
   };
 }
@@ -1045,6 +1146,7 @@ const INITIAL_SEEDS: Array<{
       nextRunSummary: 'Keep the effort quiet, restore rhythm, and arrive fresh for the next quality day.',
       nextRunDurationMin: 40,
       nextRunDurationMax: 45,
+      nextRunDistanceKm: null,
       nextRunPaceMinSecPerKm: 400,
       nextRunPaceMaxSecPerKm: 425,
       nextRunWorkout: null,
@@ -1082,6 +1184,7 @@ const INITIAL_SEEDS: Array<{
       nextRunSummary: 'Run by feel, keep the stride light, and let the heart rate settle lower than today.',
       nextRunDurationMin: 30,
       nextRunDurationMax: 40,
+      nextRunDistanceKm: null,
       nextRunPaceMinSecPerKm: 410,
       nextRunPaceMaxSecPerKm: 440,
       nextRunWorkout: null,

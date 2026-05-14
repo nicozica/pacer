@@ -93,6 +93,7 @@ When Pacer loads or saves a session in the editor, the effective package is:
     "nextRunSummary": "Run by feel, keep the stride light, and let the heart rate settle lower than today.",
     "nextRunDurationMin": 30,
     "nextRunDurationMax": 40,
+    "nextRunDistanceKm": 6.0,
     "nextRunPaceMinSecPerKm": 410,
     "nextRunPaceMaxSecPerKm": 440,
     "nextRunWorkout": {
@@ -120,5 +121,8 @@ These are local Pacer outputs only. `run.nico.ar` can consume them later, but Pa
 
 Dashboard summary guidance:
 - `next-run.json.summary` should stay compact: 1-2 short sentences, about 120-180 characters, focused on intent rather than step-by-step structure.
+- `next-run.json.distanceKm` should stay optional and represent one practical estimated distance value, formatted later by `run.nico.ar`.
 - `weekly-summary.json.summary` should also stay compact and fit naturally in about 3 visual lines on `run.nico.ar`.
 - When `nextRunWorkout` exists, warm-up / reps / cooldown details belong in `nextRunWorkout.blocks`, not duplicated in `nextRunSummary`.
+- `nextRunSummary` should describe the intent and feel of the run, not restate the recipe.
+- Exact rep counts, detailed step timing, and explicit pace brackets should live in `nextRunWorkout.blocks`, not in the dashboard summary.

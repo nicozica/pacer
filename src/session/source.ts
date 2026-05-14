@@ -20,6 +20,7 @@ export interface SourceActivity {
   average_heartrate?: number;
   max_heartrate?: number;
   average_speed: number;
+  calories?: number;
   start_latlng?: number[];
   map?: {
     summary_polyline?: string;
