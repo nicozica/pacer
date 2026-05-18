@@ -654,8 +654,53 @@ async function refreshFromStrava(options = {}) {
   } finally {
     if (updateButton) {
       btn.disabled = false;
-      btn.textContent = '↺ Refresh from Strava';
+      btn.textContent = '↺ Refresh & publish';
     }
+  }
+}
+
+async function refreshAndPublish() {
+  const btn = document.getElementById('btn-refresh');
+  const selectedSourceActivityId = currentEditorSession?.selectedSourceActivityId ?? null;
+  const previousLastUpdated = document.getElementById('last-updated').textContent;
+
+  btn.disabled = true;
+  btn.textContent = '↺ Publishing…';
+  hideError();
+  hideNotice();
+  setLastUpdatedMessage('Refreshing from Strava and publishing…');
+
+  try {
+    const response = await fetchJson('/api/refresh-and-publish', { method: 'POST' });
+    currentSummary = response.summary;
+    renderData();
+    currentWeather = await loadWeatherForLatestActivity(currentSummary);
+    await reloadEditorState(selectedSourceActivityId);
+    renderSourceCard();
+    updateBrief();
+
+    const publishStatus = response.publishStatus;
+    if (publishStatus?.ok) {
+      const targetSuffix = publishStatus.deployTarget ? ` Target: ${publishStatus.deployTarget}.` : '';
+      showNotice(`${publishStatus.message}.${targetSuffix}`);
+    } else if (publishStatus) {
+      const logSuffix = publishStatus.logFile ? ` Log: ${publishStatus.logFile}` : '';
+      const tailSuffix = Array.isArray(publishStatus.outputTail) && publishStatus.outputTail.length > 0
+        ? ` Last output: ${publishStatus.outputTail[publishStatus.outputTail.length - 1]}`
+        : '';
+      showError(`Refresh completed, but publish failed. ${publishStatus.message}.${logSuffix}${tailSuffix}`);
+    } else {
+      showNotice('Strava refreshed and snapshots exported.');
+    }
+  } catch (err) {
+    if (document.getElementById('last-updated').textContent === 'Refreshing from Strava and publishing…') {
+      setLastUpdatedMessage(previousLastUpdated || 'No data loaded');
+    }
+    showError(err.message || 'Refresh and publish failed.');
+    throw err;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '↺ Refresh & publish';
   }
 }
 
@@ -1103,9 +1148,9 @@ async function copyText(text) {
 
 document.getElementById('btn-refresh').addEventListener('click', async () => {
   try {
-    await refreshFromStrava();
+    await refreshAndPublish();
   } catch {
-    // Error feedback is already handled in refreshFromStrava.
+    // Error feedback is already handled in refreshAndPublish.
   }
 });
 

@@ -47,6 +47,9 @@ if [[ ! -d node_modules ]]; then
   npm install
 fi
 
+echo "[$(date '+%Y-%m-%d %H:%M:%S')] Checking public site..."
+npm run check
+
 echo "[$(date '+%Y-%m-%d %H:%M:%S')] Building public site..."
 npm run build
 echo "PACER_PUBLISH_BUILD_OK=1"

@@ -4,7 +4,8 @@ import * as path from 'path';
 import { config } from '../config';
 import { buildSummary } from './summary';
 import { fetchAndSaveActivities } from '../strava/activities';
-import { getEditorBootstrap, saveSession } from '../session/service';
+import { getEditorBootstrap, publishSnapshots, saveSession } from '../session/service';
+import { deployRunSite } from '../session/deploy';
 import { SaveSessionInput } from '../session/types';
 
 const WEB_DIR = path.resolve(process.cwd(), 'web');
@@ -134,6 +135,24 @@ const server = http.createServer(async (req, res) => {
     try {
       await fetchAndSaveActivities();
       sendJson(res, 200, buildSummary());
+    } catch (err) {
+      sendJson(res, 500, { error: friendlyError(err as Error) });
+    }
+    return;
+  }
+
+  if (url === '/api/refresh-and-publish' && method === 'POST') {
+    try {
+      await fetchAndSaveActivities();
+      const publishArtifacts = publishSnapshots();
+      const publishStatus = await deployRunSite();
+
+      sendJson(res, 200, {
+        ok: publishStatus.ok,
+        summary: buildSummary(),
+        publishArtifacts,
+        publishStatus,
+      });
     } catch (err) {
       sendJson(res, 500, { error: friendlyError(err as Error) });
     }
