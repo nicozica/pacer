@@ -6,7 +6,7 @@ import { createTrainingSource, getTrainingSourceForBundle } from '../training/so
 
 export interface SourceActivity {
   id?: number;
-  source?: 'strava' | 'intervals';
+  source?: 'intervals';
   sourceActivityId?: number;
   originalActivityId?: string | null;
   originalActivityUrl?: string | null;

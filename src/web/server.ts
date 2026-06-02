@@ -69,19 +69,19 @@ function readJsonBody<T>(req: http.IncomingMessage): Promise<T> {
 function friendlyError(err: Error): string {
   const msg = err.message ?? '';
   if (msg.includes('INTERVALS_API_KEY')) {
-    return 'Intervals.icu API key is missing. Set INTERVALS_API_KEY or switch TRAINING_SOURCE=strava.';
+    return 'Intervals.icu API key is missing. Set INTERVALS_API_KEY.';
   }
   if (msg.includes('Intervals.icu API error')) {
     return msg;
   }
-  if (msg.includes('No Strava tokens')) {
-    return 'No Strava tokens found. Run `npm run strava:auth` first.';
+  if (msg.includes('TRAINING_SOURCE=')) {
+    return msg;
   }
-  if (msg.includes('re-authenticate') || msg.includes('401') || msg.includes('403')) {
-    return 'Strava authentication failed. Run `npm run strava:auth` to re-authenticate.';
+  if (msg.includes('401') || msg.includes('403')) {
+    return 'Intervals.icu authentication failed. Check INTERVALS_API_KEY and INTERVALS_ATHLETE_ID.';
   }
   if (msg.includes('429')) {
-    return `${config.trainingSource === 'intervals' ? 'Intervals.icu' : 'Strava'} API rate limit reached. Wait a few minutes and try again.`;
+    return 'Intervals.icu API rate limit reached. Wait a few minutes and try again.';
   }
   if (msg.includes('ENOTFOUND') || msg.includes('fetch failed')) {
     return 'Network error. Check your internet connection and try again.';

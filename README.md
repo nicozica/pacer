@@ -1,7 +1,7 @@
 # Pacer
 
 Personal running workflow assistant.
-Reads training activities from the Strava API, stores curated sessions in SQLite, and exports local CMS snapshots for run.nico.ar.
+Reads training activities from Intervals.icu, stores curated sessions in SQLite, and exports local CMS snapshots for run.nico.ar.
 Playwright browser capture is available as a secondary, optional tool.
 
 ## Requirements
@@ -14,7 +14,7 @@ Playwright browser capture is available as a secondary, optional tool.
 ```bash
 npm install
 cp .env.example .env
-# Edit .env and fill in your Strava API credentials
+# Edit .env and fill in your Intervals.icu API credentials
 ```
 
 ## Session storage
@@ -33,85 +33,18 @@ to insert the first two real sessions and refresh local export snapshots under `
 
 ## Training Data Source
 
-Pacer can fetch training activities from Strava or Intervals.icu. Strava remains the default.
+Pacer fetches live training activities from Intervals.icu. Personal API key auth uses Basic Auth with username `API_KEY` and the API key as the password.
 
-```env
-TRAINING_SOURCE=strava
-# TRAINING_SOURCE=intervals
-```
-
-### Strava setup
-
-Create a Strava API application
-
-Go to https://www.strava.com/settings/api and create an app.
-Set the **Authorization Callback Domain** to `localhost`.
-
-Copy the **Client ID** and **Client Secret** into your `.env`:
-
-```env
-STRAVA_CLIENT_ID=your_client_id
-STRAVA_CLIENT_SECRET=your_client_secret
-STRAVA_REDIRECT_URI=http://localhost
-```
-
-Authenticate once:
-
-```bash
-npm run strava:auth
-```
-
-This will:
-1. Print an authorization URL
-2. Open it in any browser (on any machine — no display required on the Pi)
-3. After you authorize, Strava redirects to a URL containing a `code`
-4. Paste that full URL or just the `code` into the terminal
-5. Tokens are saved to `storage/auth/strava-tokens.json`
-
-Fetch activities:
-
-```bash
-npm run training:fetch
-```
-
-Downloads your latest activities and saves them to `storage/json/activities.latest.json`.
-
-The access token is refreshed automatically when expired.
-
-Output format:
-
-```json
-{
-  "fetched_at": "2026-03-09T19:00:00.000Z",
-  "source": "strava-api",
-  "count": 30,
-  "activities": [ ... ]
-}
-```
-
-To change how many activities are fetched, set in `.env`:
-
-```env
-STRAVA_ACTIVITIES_PER_PAGE=50
-```
-
-The legacy command still works and now uses the configured source:
-
-```bash
-npm run strava:fetch
-```
-
-### Intervals.icu setup
-
-Intervals.icu personal API key auth uses Basic Auth with username `API_KEY` and the API key as the password.
+Configure `.env`:
 
 ```env
 TRAINING_SOURCE=intervals
 INTERVALS_API_KEY=your_intervals_api_key
 INTERVALS_ATHLETE_ID=0
+INTERVALS_FETCH_DAYS=180
 ```
 
-Fetch and save the configured training source:
+Fetch and save activities to `storage/json/activities.latest.json`:
 
 ```bash
 npm run training:fetch
@@ -125,12 +58,6 @@ npm run intervals:smoke -- --oldest=2026-05-01 --newest=2026-06-02 --write-raw
 ```
 
 The optional raw response is written under `storage/json/debug/`, which is ignored by git.
-
-Compare Strava and Intervals.icu over the same date range before switching:
-
-```bash
-npm run intervals:compare -- --oldest=2026-05-01 --newest=2026-06-02
-```
 
 ---
 
@@ -147,15 +74,15 @@ npx playwright install chromium
 ### Authenticate (browser session)
 
 ```bash
-npm run auth:strava   # saves to storage/auth/strava.json
+npm run auth:garmin   # saves to storage/auth/garmin.json
 ```
 
 Opens Chromium in headed mode. Log in manually, then press Enter to save the session.
 To run on a headless Pi, generate the session on a machine with a display and copy it:
 
 ```bash
-scp /srv/repos/personal/argensonix/labs/pacer/storage/auth/strava.json \
-    rpi:/srv/repos/personal/argensonix/labs/pacer/storage/auth/strava.json
+scp /srv/repos/personal/argensonix/labs/pacer/storage/auth/garmin.json \
+    rpi:/srv/repos/personal/argensonix/labs/pacer/storage/auth/garmin.json
 ```
 
 ### Capture screenshots
@@ -179,7 +106,6 @@ HEADLESS=false npm run capture
 ```
 src/
   training/     Training source adapters and fetch commands
-  strava/       Strava API integration (auth, client)
   config/       App configuration (reads .env)
   capture/      Playwright screenshot runner (secondary)
   auth/         Playwright browser session scripts (secondary)

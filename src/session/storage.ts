@@ -39,6 +39,15 @@ interface PersistedSessionInput {
   laps: SessionLapRecord[];
 }
 
+export interface SessionFingerprintInput {
+  sessionDate: string;
+  sport: string;
+  startDateLocal: string | null;
+  distanceM: number | null;
+  movingTimeS: number | null;
+  elapsedTimeS: number | null;
+}
+
 type SqliteDatabase = Database.Database;
 
 let database: SqliteDatabase | null = null;
@@ -305,6 +314,7 @@ function parseNextRunWorkout(value: unknown): SessionNextRunWorkout | null {
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
 
     const type = (parsed as { type?: unknown }).type;
+    const title = (parsed as { title?: unknown }).title;
     const blocks = (parsed as { blocks?: unknown }).blocks;
 
     if (typeof type !== 'string' || !type.trim() || !Array.isArray(blocks)) return null;
@@ -317,6 +327,7 @@ function parseNextRunWorkout(value: unknown): SessionNextRunWorkout | null {
     if (normalizedBlocks.length === 0) return null;
 
     return {
+      ...(typeof title === 'string' && title.trim() ? { title: title.trim() } : {}),
       type: type.trim(),
       blocks: normalizedBlocks,
     };
@@ -426,6 +437,42 @@ function mapSession(db: SqliteDatabase, coreRow: Record<string, unknown>): Store
   };
 }
 
+function parseTimestamp(value: string | null): number | null {
+  if (!value) return null;
+  const localParts = value.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?/);
+  const timestamp = localParts
+    ? Date.UTC(
+      Number(localParts[1]),
+      Number(localParts[2]) - 1,
+      Number(localParts[3]),
+      Number(localParts[4]),
+      Number(localParts[5]),
+      Number(localParts[6] ?? '0'),
+    )
+    : Date.parse(value);
+  return Number.isNaN(timestamp) ? null : timestamp;
+}
+
+function withinTolerance(left: number | null, right: number | null, tolerance: number): boolean {
+  if (left === null || right === null) return true;
+  return Math.abs(left - right) <= tolerance;
+}
+
+function fingerprintMatches(session: StoredSession, fingerprint: SessionFingerprintInput): boolean {
+  if (session.core.sessionDate !== fingerprint.sessionDate || session.core.sport !== fingerprint.sport) {
+    return false;
+  }
+
+  const sessionTime = parseTimestamp(session.core.startDateLocal);
+  const inputTime = parseTimestamp(fingerprint.startDateLocal);
+  const timeMatches = sessionTime === null || inputTime === null || Math.abs(sessionTime - inputTime) <= 10 * 60 * 1000;
+
+  return timeMatches
+    && withinTolerance(session.core.distanceM, fingerprint.distanceM, 150)
+    && withinTolerance(session.core.movingTimeS, fingerprint.movingTimeS, 180)
+    && withinTolerance(session.core.elapsedTimeS, fingerprint.elapsedTimeS, 240);
+}
+
 export function initSessionStore(): void {
   getDatabase();
 }
@@ -450,6 +497,46 @@ export function listStoredSessions(): StoredSession[] {
   `).all() as Record<string, unknown>[];
 
   return rows.map((row) => mapSession(db, row));
+}
+
+export function getStoredSessionByActivityFingerprint(fingerprint: SessionFingerprintInput): StoredSession | null {
+  const db = getDatabase();
+  const rows = db.prepare(`
+    SELECT *
+    FROM sessions
+    WHERE session_date = ? AND sport = ?
+    ORDER BY published_at DESC, updated_at DESC, id DESC
+  `).all(fingerprint.sessionDate, fingerprint.sport) as Record<string, unknown>[];
+
+  for (const row of rows) {
+    const session = mapSession(db, row);
+    if (fingerprintMatches(session, fingerprint)) {
+      return session;
+    }
+  }
+
+  return null;
+}
+
+export function reassignSessionSourceActivityId(sessionId: number, source: string, sourceActivityId: number): StoredSession {
+  const db = getDatabase();
+  const conflicting = getStoredSessionBySourceActivityId(sourceActivityId);
+  if (conflicting && conflicting.core.id !== sessionId) {
+    throw new Error(`Source activity ${sourceActivityId} is already attached to session ${conflicting.core.id}.`);
+  }
+
+  db.prepare(`
+    UPDATE sessions
+    SET source = ?, source_activity_id = ?, updated_at = ?
+    WHERE id = ?
+  `).run(source, sourceActivityId, new Date().toISOString(), sessionId);
+
+  const saved = getStoredSessionBySourceActivityId(sourceActivityId);
+  if (!saved) {
+    throw new Error(`Could not reassign session ${sessionId} to source activity ${sourceActivityId}.`);
+  }
+
+  return saved;
 }
 
 export function listPublishedSessions(): StoredSession[] {

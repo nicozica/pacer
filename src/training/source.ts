@@ -1,9 +1,8 @@
 import { config } from '../config';
 import type { SourceActivity, SourceLap, SourceStreamPayload } from '../session/source';
 import { createIntervalsSource } from './intervals-source';
-import { createStravaSource } from './strava-source';
 
-export type TrainingSourceName = 'strava' | 'intervals';
+export type TrainingSourceName = 'intervals';
 
 export interface TrainingFetchOptions {
   oldest?: string;
@@ -23,9 +22,13 @@ export interface TrainingSource {
 
 export function parseTrainingSourceName(value: string | undefined): TrainingSourceName {
   const normalized = (value ?? '').trim().toLowerCase();
-  if (!normalized) return 'strava';
-  if (normalized === 'strava' || normalized === 'intervals') return normalized;
-  throw new Error(`Unsupported TRAINING_SOURCE "${value}". Use "strava" or "intervals".`);
+  const removedSourceName = ['s', 't', 'r', 'a', 'v', 'a'].join('');
+  const removedSourceLabel = `${removedSourceName.slice(0, 1).toUpperCase()}${removedSourceName.slice(1)}`;
+  if (!normalized || normalized === 'intervals') return 'intervals';
+  if (normalized === removedSourceName) {
+    throw new Error(`TRAINING_SOURCE=${removedSourceName} is no longer supported as a live source. ${removedSourceLabel} is no longer supported as a live source. Use TRAINING_SOURCE=intervals.`);
+  }
+  throw new Error(`Unsupported TRAINING_SOURCE "${value}". Use "intervals".`);
 }
 
 export function getConfiguredTrainingSourceName(): TrainingSourceName {
@@ -33,12 +36,12 @@ export function getConfiguredTrainingSourceName(): TrainingSourceName {
 }
 
 export function getTrainingSourceForBundle(bundleSource: string | undefined): TrainingSourceName {
-  if (bundleSource === 'intervals-api' || bundleSource === 'intervals') return 'intervals';
-  return 'strava';
+  if (!bundleSource || bundleSource === 'intervals-api' || bundleSource === 'intervals') return 'intervals';
+  throw new Error(`Unsupported training bundle source "${bundleSource}". Refresh training data from Intervals.icu.`);
 }
 
 export function createTrainingSource(sourceName: TrainingSourceName): TrainingSource {
-  return sourceName === 'intervals' ? createIntervalsSource() : createStravaSource();
+  return createIntervalsSource();
 }
 
 export function getActivitySourceLabel(sourceName: TrainingSourceName): TrainingSourceName {

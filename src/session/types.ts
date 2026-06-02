@@ -265,7 +265,7 @@ export interface ActivityContextExport {
 
 export interface ActivityLogItem {
   id: number | null;
-  source: 'strava' | 'intervals';
+  source: 'intervals';
   sourceActivityId?: number | null;
   originalActivityId?: string | null;
   rawActivityName?: string | null;
@@ -291,7 +291,6 @@ export interface ActivityLogItem {
   deviceName: string | null;
   routeSvgPoints: string | null;
   sourceActivityUrl: string | null;
-  stravaUrl: string | null;
 }
 
 export interface ActivityLogExport {

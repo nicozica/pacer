@@ -23,21 +23,14 @@ export const config = {
 
   // Playwright capture settings
   headless: process.env.HEADLESS !== 'false',
-  authStateFile: process.env.AUTH_STATE_FILE ?? path.join(process.env.STORAGE_DIR ?? 'storage', 'auth', 'strava.json'),
+  authStateFile: process.env.AUTH_STATE_FILE ?? path.join(process.env.STORAGE_DIR ?? 'storage', 'auth', 'browser-state.json'),
   targetPages: (process.env.TARGET_PAGES ?? '')
     .split(',')
     .map((s) => s.trim())
     .filter(Boolean),
 
-  // Strava API settings
-  trainingSource: process.env.TRAINING_SOURCE ?? 'strava',
-  stravaClientId: process.env.STRAVA_CLIENT_ID ?? '',
-  stravaClientSecret: process.env.STRAVA_CLIENT_SECRET ?? '',
-  stravaRedirectUri: process.env.STRAVA_REDIRECT_URI ?? 'http://localhost',
-  stravaTokensFile: process.env.STRAVA_TOKENS_FILE ?? path.join(process.env.STORAGE_DIR ?? 'storage', 'auth', 'strava-tokens.json'),
-  stravaActivitiesPerPage: parseInt(process.env.STRAVA_ACTIVITIES_PER_PAGE ?? '100', 10),
-
   // Intervals.icu API settings
+  trainingSource: process.env.TRAINING_SOURCE ?? 'intervals',
   intervalsApiKey: process.env.INTERVALS_API_KEY ?? '',
   intervalsAthleteId: process.env.INTERVALS_ATHLETE_ID ?? '0',
   intervalsFetchDays: parseIntWithFallback(process.env.INTERVALS_FETCH_DAYS, 180),

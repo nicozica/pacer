@@ -773,9 +773,9 @@ function sourceOptionLabel(option) {
 
   if (typeof option.distanceKm === 'number') parts.push(`${option.distanceKm.toFixed(1)} km`);
   if (option.savedSignalTitle) {
-    parts.push(`saved: ${option.savedSignalTitle}`);
+    parts.push(`${option.savedSessionMatchedBy === 'fingerprint' ? 'matched' : 'saved'}: ${option.savedSignalTitle}`);
   } else if (option.savedSessionId) {
-    parts.push('saved');
+    parts.push(option.savedSessionMatchedBy === 'fingerprint' ? 'matched saved session' : 'saved');
   }
 
   return parts.join(' · ');
@@ -829,6 +829,9 @@ function renderSourceCard() {
   if (source.hrLine) secondaryStats.push(`HR ${source.hrLine}`);
   if (source.elevationLabel) secondaryStats.push(source.elevationLabel);
   if (resolveSelectedWeatherLine() !== '—') secondaryStats.push(resolveSelectedWeatherLine());
+  const rawNameLine = source.rawActivityName && source.rawActivityName !== source.title
+    ? `<p class="source-card-line is-muted">Raw: ${escapeHtml(source.rawActivityName)}</p>`
+    : '';
 
   card.innerHTML = [
     `<div class="source-card-title">${escapeHtml(source.title)}</div>`,
@@ -837,6 +840,7 @@ function renderSourceCard() {
     secondaryStats.length > 0
       ? `<p class="source-card-line is-muted">${escapeHtml(secondaryStats.join(' · '))}</p>`
       : '',
+    rawNameLine,
   ].join('');
 }
 

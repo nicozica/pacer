@@ -7,7 +7,6 @@
   "include": [
     "src/config/**/*",
     "src/session/**/*",
-    "src/strava/**/*",
     "src/training/**/*",
     "src/utils/**/*",
     "src/web/**/*"

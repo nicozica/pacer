@@ -190,7 +190,7 @@ function buildActivityLogExport(bundle: ActivityBundle | null): ActivityLogExpor
       const source = activity.source ?? getActivitySourceLabel(getTrainingSourceForBundle(bundle.source));
       const sourceActivityUrl = activity.sourceActivityUrl
         ?? activity.originalActivityUrl
-        ?? (source === 'strava' && id !== null ? `https://www.strava.com/activities/${id}` : null);
+        ?? null;
 
       return {
         id,
@@ -220,7 +220,6 @@ function buildActivityLogExport(bundle: ActivityBundle | null): ActivityLogExpor
         deviceName: activity.device_name ?? null,
         routeSvgPoints: route.routeSvgPoints,
         sourceActivityUrl,
-        stravaUrl: source === 'strava' && id !== null ? `https://www.strava.com/activities/${id}` : null,
       };
     })
     : [];
