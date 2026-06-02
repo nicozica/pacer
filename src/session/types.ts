@@ -29,6 +29,7 @@ export interface SessionAIInput {
 }
 
 export interface SessionNextRunWorkout {
+  title?: string;
   type: string;
   blocks: string[];
 }
@@ -97,9 +98,14 @@ export interface RecentRunOption {
   sourceActivityId: number;
   sessionDate: string;
   title: string;
+  rawActivityName: string | null;
+  displayActivityName: string | null;
+  workoutCode: string | null;
+  sessionTypeSuggestion: string | null;
   distanceKm: number | null;
   movingTimeLabel: string;
   savedSessionId: number | null;
+  savedSessionMatchedBy: 'id' | 'fingerprint' | null;
   savedSignalTitle: string | null;
 }
 
@@ -107,6 +113,10 @@ export interface SessionSourceSummary {
   sourceActivityId: number;
   sessionDate: string;
   title: string;
+  rawActivityName: string | null;
+  displayActivityName: string | null;
+  workoutCode: string | null;
+  sessionTypeSuggestion: string | null;
   sport: string;
   source: string;
   distanceKm: number | null;
@@ -154,6 +164,10 @@ export interface SessionExportLatest {
   sessionDate: string;
   startDateLocal: string | null;
   title: string;
+  rawActivityName?: string | null;
+  displayActivityName?: string | null;
+  workoutCode?: string | null;
+  sessionTypeSuggestion?: string | null;
   sport: string;
   distanceM: number | null;
   movingTimeS: number | null;
@@ -181,6 +195,7 @@ export interface SessionExportNextRun {
   sessionDate: string;
   title: string;
   summary: string;
+  type?: string | null;
   durationMin: number | null;
   durationMax: number | null;
   distanceKm: number | null;
@@ -250,7 +265,13 @@ export interface ActivityContextExport {
 
 export interface ActivityLogItem {
   id: number | null;
-  source: 'strava';
+  source: 'strava' | 'intervals';
+  sourceActivityId?: number | null;
+  originalActivityId?: string | null;
+  rawActivityName?: string | null;
+  displayActivityName?: string | null;
+  workoutCode?: string | null;
+  sessionTypeSuggestion?: string | null;
   title: string;
   type: string;
   sportType: string | null;
@@ -265,7 +286,11 @@ export interface ActivityLogItem {
   elevationGainM: number | null;
   paceSecPerKm: number | null;
   averageSpeedMps: number | null;
+  averageCadence: number | null;
+  trainingLoad: number | null;
+  deviceName: string | null;
   routeSvgPoints: string | null;
+  sourceActivityUrl: string | null;
   stravaUrl: string | null;
 }
 

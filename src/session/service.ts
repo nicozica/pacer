@@ -18,12 +18,15 @@ import {
   sortActivitiesDesc,
 } from './source';
 import {
+  SessionFingerprintInput,
+  getStoredSessionByActivityFingerprint,
   getLatestWeeklySnapshot,
   getStoredSessionBySourceActivityId,
   initSessionStore,
   listPublishedSessions,
   listStoredSessionSummaries,
   markSessionPublished,
+  reassignSessionSourceActivityId,
   saveStoredSession,
   upsertWeeklySnapshot,
 } from './storage';
@@ -58,12 +61,15 @@ import { buildRouteMetadata } from './route';
 import { ensureDir } from '../utils/storage';
 import { deployRunSite } from './deploy';
 import { deriveActivityContext, isRideActivity, isTrainingActivity } from '../activity-context';
+import { getActivitySourceLabel, getTrainingSourceForBundle } from '../training/source';
+import { buildActivityNameMetadata } from '../training/activity-names';
 
 const DAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const SESSION_TYPES = new Set([
   'Easy Run',
   'Long Run',
   'Hills',
+  'Intervals',
   'Interval Session',
   'Race',
   'Recovery Run',
@@ -132,7 +138,7 @@ function toActivityContextTraining(activity: SourceActivity | null | undefined):
 
   return {
     sourceActivityId: activity.id ?? null,
-    title: activity.name,
+    title: getActivityTitle(activity),
     sport: getActivityType(activity),
     startDateLocal: activity.start_date_local || activity.start_date,
     metrics: [
@@ -150,7 +156,7 @@ function toActivityContextRide(activity: SourceActivity | null | undefined): Act
 
   return {
     sourceActivityId: activity.id ?? null,
-    title: activity.name,
+    title: getActivityTitle(activity),
     sport: getActivityType(activity),
     startDateLocal: activity.start_date_local || activity.start_date,
     metrics: [
@@ -181,11 +187,21 @@ function buildActivityLogExport(bundle: ActivityBundle | null): ActivityLogExpor
       const id = typeof activity.id === 'number' ? activity.id : null;
       const averageSpeed = normalizeActivityNumber(activity.average_speed);
       const route = buildRouteMetadata(activity.map?.summary_polyline || null);
+      const source = activity.source ?? getActivitySourceLabel(getTrainingSourceForBundle(bundle.source));
+      const sourceActivityUrl = activity.sourceActivityUrl
+        ?? activity.originalActivityUrl
+        ?? (source === 'strava' && id !== null ? `https://www.strava.com/activities/${id}` : null);
 
       return {
         id,
-        source: 'strava',
-        title: activity.name,
+        source,
+        sourceActivityId: activity.sourceActivityId ?? id,
+        originalActivityId: activity.originalActivityId ?? (id === null ? null : String(id)),
+        rawActivityName: getActivityRawName(activity),
+        displayActivityName: getActivityTitle(activity),
+        workoutCode: getActivityWorkoutCode(activity),
+        sessionTypeSuggestion: getActivitySessionTypeSuggestion(activity),
+        title: getActivityTitle(activity),
         type: activity.type || getActivityType(activity),
         sportType: activity.sport_type ?? null,
         startDate: activity.start_date,
@@ -199,8 +215,12 @@ function buildActivityLogExport(bundle: ActivityBundle | null): ActivityLogExpor
         elevationGainM: normalizeActivityNumber(activity.total_elevation_gain),
         paceSecPerKm: isRunLike(activity) && averageSpeed ? paceSecPerKmFromSpeed(averageSpeed) : null,
         averageSpeedMps: averageSpeed,
+        averageCadence: normalizeActivityNumber(activity.average_cadence),
+        trainingLoad: normalizeActivityNumber(activity.training_load),
+        deviceName: activity.device_name ?? null,
         routeSvgPoints: route.routeSvgPoints,
-        stravaUrl: id === null ? null : `https://www.strava.com/activities/${id}`,
+        sourceActivityUrl,
+        stravaUrl: source === 'strava' && id !== null ? `https://www.strava.com/activities/${id}` : null,
       };
     })
     : [];
@@ -222,6 +242,47 @@ function formatPaceFromSeconds(secPerKm: number | null): string | null {
 function formatDistanceKm(distanceM: number | null): number | null {
   if (typeof distanceM !== 'number' || distanceM <= 0) return null;
   return roundOneDecimal(distanceM / 1000);
+}
+
+function getActivityTitle(activity: SourceActivity): string {
+  return activity.displayActivityName || buildActivityNameMetadata(activity.name, getActivityType(activity)).displayActivityName;
+}
+
+function getActivityRawName(activity: SourceActivity): string | null {
+  return activity.rawActivityName ?? buildActivityNameMetadata(activity.name, getActivityType(activity)).rawActivityName ?? null;
+}
+
+function getActivitySessionTypeSuggestion(activity: SourceActivity): string | null {
+  const suggestion = activity.sessionTypeSuggestion ?? buildActivityNameMetadata(activity.name, getActivityType(activity)).sessionTypeSuggestion;
+  return suggestion && SESSION_TYPES.has(suggestion) ? suggestion : null;
+}
+
+function getActivityWorkoutCode(activity: SourceActivity): string | null {
+  return activity.workoutCode ?? buildActivityNameMetadata(activity.name, getActivityType(activity)).workoutCode;
+}
+
+function buildActivityFingerprint(activity: SourceActivity): SessionFingerprintInput {
+  return {
+    sessionDate: (activity.start_date_local || activity.start_date).slice(0, 10),
+    sport: getActivityType(activity),
+    startDateLocal: activity.start_date_local || activity.start_date || null,
+    distanceM: typeof activity.distance === 'number' ? roundOneDecimal(activity.distance) : null,
+    movingTimeS: typeof activity.moving_time === 'number' ? Math.round(activity.moving_time) : null,
+    elapsedTimeS: typeof activity.elapsed_time === 'number' ? Math.round(activity.elapsed_time) : null,
+  };
+}
+
+function findStoredSessionForActivity(activity: SourceActivity): { session: StoredSession | null; matchedBy: 'id' | 'fingerprint' | null } {
+  if (typeof activity.id === 'number') {
+    const exact = getStoredSessionBySourceActivityId(activity.id);
+    if (exact) return { session: exact, matchedBy: 'id' };
+  }
+
+  const fingerprintMatch = getStoredSessionByActivityFingerprint(buildActivityFingerprint(activity));
+  return {
+    session: fingerprintMatch,
+    matchedBy: fingerprintMatch ? 'fingerprint' : null,
+  };
 }
 
 function formatHrLine(hrAvg: number | null, hrMax: number | null): string | null {
@@ -284,6 +345,7 @@ function sanitizeNextRunWorkout(value: unknown): SessionNextRunWorkout | null {
   if (!SESSION_TYPES.has(type)) {
     throw new Error(`nextRunWorkout.type must be one of: ${Array.from(SESSION_TYPES).join(', ')}.`);
   }
+  const title = sanitizeText((value as { title?: unknown }).title);
 
   const rawBlocks = (value as { blocks?: unknown }).blocks;
   if (!Array.isArray(rawBlocks)) {
@@ -299,7 +361,11 @@ function sanitizeNextRunWorkout(value: unknown): SessionNextRunWorkout | null {
     throw new Error('nextRunWorkout.blocks must include at least one block.');
   }
 
-  return { type, blocks };
+  return {
+    ...(title ? { title } : {}),
+    type,
+    blocks,
+  };
 }
 
 function buildRecentRunOptions(bundle: ActivityBundle): RecentRunOption[] {
@@ -312,16 +378,29 @@ function buildRecentRunOptions(bundle: ActivityBundle): RecentRunOption[] {
     .filter((activity): activity is SourceActivity & { id: number } => typeof activity.id === 'number')
     .slice(0, 12)
     .map((activity) => {
-      const saved = savedSessions.get(activity.id) ?? null;
+      const exactSaved = savedSessions.get(activity.id) ?? null;
+      const resolvedSaved = exactSaved
+        ? { sessionId: exactSaved.sessionId, signalTitle: exactSaved.signalTitle, matchedBy: 'id' as const }
+        : (() => {
+          const match = findStoredSessionForActivity(activity);
+          return match.session
+            ? { sessionId: match.session.core.id, signalTitle: match.session.ai.signalTitle || null, matchedBy: match.matchedBy }
+            : null;
+        })();
 
       return {
         sourceActivityId: activity.id,
         sessionDate: (activity.start_date_local || activity.start_date).slice(0, 10),
-        title: activity.name,
+        title: getActivityTitle(activity),
+        rawActivityName: getActivityRawName(activity),
+        displayActivityName: getActivityTitle(activity),
+        workoutCode: getActivityWorkoutCode(activity),
+        sessionTypeSuggestion: getActivitySessionTypeSuggestion(activity),
         distanceKm: formatDistanceKm(activity.distance),
         movingTimeLabel: formatDuration(activity.moving_time),
-        savedSessionId: saved?.sessionId ?? null,
-        savedSignalTitle: saved?.signalTitle ?? null,
+        savedSessionId: resolvedSaved?.sessionId ?? null,
+        savedSessionMatchedBy: resolvedSaved?.matchedBy ?? null,
+        savedSignalTitle: resolvedSaved?.signalTitle ?? null,
       };
     });
 }
@@ -355,7 +434,11 @@ function buildSourceSummary(bundle: ActivityBundle, activity: SourceActivity, st
   return {
     sourceActivityId: activity.id ?? 0,
     sessionDate,
-    title: activity.name,
+    title: getActivityTitle(activity),
+    rawActivityName: getActivityRawName(activity),
+    displayActivityName: getActivityTitle(activity),
+    workoutCode: getActivityWorkoutCode(activity),
+    sessionTypeSuggestion: getActivitySessionTypeSuggestion(activity),
     sport: getActivityType(activity),
     source: bundle.source,
     distanceKm: formatDistanceKm(activity.distance),
@@ -378,13 +461,17 @@ function buildEditorSession(bundle: ActivityBundle, sourceActivityId: number): E
     throw new Error(`Could not find source activity ${sourceActivityId}.`);
   }
 
-  const stored = getStoredSessionBySourceActivityId(sourceActivityId);
+  const { session: stored } = findStoredSessionForActivity(activity);
+  const suggestedSessionType = getActivitySessionTypeSuggestion(activity);
+  const suggestedManual = suggestedSessionType
+    ? { ...blankManual(), sessionType: suggestedSessionType }
+    : blankManual();
 
   return {
     selectedSourceActivityId: sourceActivityId,
     savedSessionId: stored?.core.id ?? null,
     source: buildSourceSummary(bundle, activity, stored),
-    manual: stored?.manual ?? blankManual(),
+    manual: stored?.manual ?? suggestedManual,
     files: stored?.files ?? blankFiles(),
     ai: stored
       ? {
@@ -564,6 +651,17 @@ function compactNextRunSummary(summary: string, workout: SessionNextRunWorkout |
   return ensureTerminalPunctuation(trimSentenceToLength(chosen || candidate, 155));
 }
 
+function withNextRunWorkoutTitle(workout: SessionNextRunWorkout | null, title: string): SessionNextRunWorkout | null {
+  if (!workout) return null;
+  const normalizedTitle = workout.title || title.trim();
+  const normalizedType = /\bintervals?\b/i.test(`${normalizedTitle} ${workout.type}`) ? 'Intervals' : workout.type;
+  return {
+    ...(normalizedTitle ? { title: normalizedTitle } : {}),
+    type: normalizedType,
+    blocks: workout.blocks,
+  };
+}
+
 function buildWeeklySnapshotFromSessions(sessions: StoredSession[]): WeeklySnapshotRecord | null {
   if (sessions.length === 0) return null;
 
@@ -600,7 +698,7 @@ function buildWeeklySnapshotFromSessions(sessions: StoredSession[]): WeeklySnaps
   };
 }
 
-function buildLatestExport(session: StoredSession): SessionExportLatest {
+function buildLatestExport(session: StoredSession, sourceActivity: SourceActivity | null = null): SessionExportLatest {
   const route = buildRouteMetadata(session.core.polyline);
 
   return {
@@ -609,6 +707,10 @@ function buildLatestExport(session: StoredSession): SessionExportLatest {
     sessionDate: session.core.sessionDate,
     startDateLocal: session.core.startDateLocal,
     title: session.core.title,
+    rawActivityName: sourceActivity ? getActivityRawName(sourceActivity) : null,
+    displayActivityName: sourceActivity ? getActivityTitle(sourceActivity) : session.core.title,
+    workoutCode: sourceActivity ? getActivityWorkoutCode(sourceActivity) : null,
+    sessionTypeSuggestion: sourceActivity ? getActivitySessionTypeSuggestion(sourceActivity) : null,
     sport: session.core.sport,
     distanceM: session.core.distanceM,
     movingTimeS: session.core.movingTimeS,
@@ -637,7 +739,7 @@ function buildLatestExport(session: StoredSession): SessionExportLatest {
       nextRunDistanceKm: session.ai.nextRunDistanceKm,
       nextRunPaceMinSecPerKm: session.ai.nextRunPaceMinSecPerKm,
       nextRunPaceMaxSecPerKm: session.ai.nextRunPaceMaxSecPerKm,
-      nextRunWorkout: session.ai.nextRunWorkout,
+      nextRunWorkout: withNextRunWorkoutTitle(session.ai.nextRunWorkout, session.ai.nextRunTitle),
       weekTitle: session.ai.weekTitle,
       weekSummary: compactWeekSummary(session.ai.weekSummary),
     },
@@ -648,18 +750,20 @@ function buildLatestExport(session: StoredSession): SessionExportLatest {
 
 function buildNextRunExport(session: StoredSession): SessionExportNextRun | null {
   if (!session.ai.nextRunTitle && !session.ai.nextRunSummary) return null;
+  const workout = withNextRunWorkoutTitle(session.ai.nextRunWorkout, session.ai.nextRunTitle);
 
   return {
     fromSessionId: session.core.id,
     sessionDate: session.core.sessionDate,
     title: session.ai.nextRunTitle,
     summary: compactNextRunSummary(session.ai.nextRunSummary, session.ai.nextRunWorkout),
+    type: session.ai.nextRunWorkout?.type ?? null,
     durationMin: session.ai.nextRunDurationMin,
     durationMax: session.ai.nextRunDurationMax,
     distanceKm: session.ai.nextRunDistanceKm,
     paceMinSecPerKm: session.ai.nextRunPaceMinSecPerKm,
     paceMaxSecPerKm: session.ai.nextRunPaceMaxSecPerKm,
-    ...(session.ai.nextRunWorkout ? { workout: session.ai.nextRunWorkout } : {}),
+    ...(workout ? { workout } : {}),
     updatedAt: session.core.updatedAt,
   };
 }
@@ -973,13 +1077,15 @@ export async function saveSession(input: SaveSessionInput, options: SaveSessionO
   initSessionStore();
   const bundle = readActivityBundle();
   if (!bundle) {
-    throw new Error('Could not find activities.latest.json. Refresh from Strava first.');
+    throw new Error('Could not find activities.latest.json. Refresh training data first.');
   }
 
-  const sourceActivity = findActivityById(bundle, input.sourceActivityId);
   const resolvedSource = await resolveSourceActivity(bundle, input.sourceActivityId);
   const activity = resolvedSource.activity;
-  const existing = getStoredSessionBySourceActivityId(input.sourceActivityId);
+  const matchedSession = findStoredSessionForActivity(activity);
+  const existing = matchedSession.session && matchedSession.matchedBy === 'fingerprint'
+    ? reassignSessionSourceActivityId(matchedSession.session.core.id, bundle.source, input.sourceActivityId)
+    : matchedSession.session;
   const manual = sanitizeManualInput(input.manual);
   const files = sanitizeFilesInput(input.files);
   const ai = sanitizeAiInput(input.ai);
@@ -997,7 +1103,7 @@ export async function saveSession(input: SaveSessionInput, options: SaveSessionO
     core: {
       sessionDate,
       startDateLocal: activity.start_date_local || activity.start_date || null,
-      title: activity.name,
+      title: getActivityTitle(activity),
       sport: getActivityType(activity),
       source: bundle.source,
       sourceActivityId: input.sourceActivityId,
@@ -1084,8 +1190,11 @@ export function publishSnapshots(): PublishArtifacts {
   const publishedSessions = listPublishedSessions();
   const activityBundle = readActivityBundle();
   const latestSession = publishedSessions[0] ?? null;
-  const publishedSessionExports = publishedSessions.map((session) => buildLatestExport(session));
-  const latestExport = latestSession ? buildLatestExport(latestSession) : null;
+  const findSourceActivity = (session: StoredSession): SourceActivity | null => {
+    return activityBundle ? findActivityById(activityBundle, session.core.sourceActivityId) : null;
+  };
+  const publishedSessionExports = publishedSessions.map((session) => buildLatestExport(session, findSourceActivity(session)));
+  const latestExport = latestSession ? buildLatestExport(latestSession, findSourceActivity(latestSession)) : null;
   const nextRunExport = latestSession ? buildNextRunExport(latestSession) : null;
   const snapshotDraft = buildWeeklySnapshotFromSessions(publishedSessions);
   const weeklySummary = snapshotDraft ? upsertWeeklySnapshot(snapshotDraft) : null;

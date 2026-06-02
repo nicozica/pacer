@@ -30,11 +30,17 @@ export const config = {
     .filter(Boolean),
 
   // Strava API settings
+  trainingSource: process.env.TRAINING_SOURCE ?? 'strava',
   stravaClientId: process.env.STRAVA_CLIENT_ID ?? '',
   stravaClientSecret: process.env.STRAVA_CLIENT_SECRET ?? '',
   stravaRedirectUri: process.env.STRAVA_REDIRECT_URI ?? 'http://localhost',
   stravaTokensFile: process.env.STRAVA_TOKENS_FILE ?? path.join(process.env.STORAGE_DIR ?? 'storage', 'auth', 'strava-tokens.json'),
   stravaActivitiesPerPage: parseInt(process.env.STRAVA_ACTIVITIES_PER_PAGE ?? '100', 10),
+
+  // Intervals.icu API settings
+  intervalsApiKey: process.env.INTERVALS_API_KEY ?? '',
+  intervalsAthleteId: process.env.INTERVALS_ATHLETE_ID ?? '0',
+  intervalsFetchDays: parseIntWithFallback(process.env.INTERVALS_FETCH_DAYS, 180),
 
   // Web server settings
   webHost: process.env.WEB_HOST ?? '127.0.0.1',

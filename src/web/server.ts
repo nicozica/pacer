@@ -3,7 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { config } from '../config';
 import { buildSummary } from './summary';
-import { fetchAndSaveActivities } from '../strava/activities';
+import { fetchAndSaveActivities } from '../training/fetch';
 import { getEditorBootstrap, publishSnapshots, saveSession } from '../session/service';
 import { deployRunSite } from '../session/deploy';
 import { SaveSessionInput } from '../session/types';
@@ -68,6 +68,12 @@ function readJsonBody<T>(req: http.IncomingMessage): Promise<T> {
 // Translates a known error message into a user-friendly string.
 function friendlyError(err: Error): string {
   const msg = err.message ?? '';
+  if (msg.includes('INTERVALS_API_KEY')) {
+    return 'Intervals.icu API key is missing. Set INTERVALS_API_KEY or switch TRAINING_SOURCE=strava.';
+  }
+  if (msg.includes('Intervals.icu API error')) {
+    return msg;
+  }
   if (msg.includes('No Strava tokens')) {
     return 'No Strava tokens found. Run `npm run strava:auth` first.';
   }
@@ -75,7 +81,7 @@ function friendlyError(err: Error): string {
     return 'Strava authentication failed. Run `npm run strava:auth` to re-authenticate.';
   }
   if (msg.includes('429')) {
-    return 'Strava API rate limit reached. Wait a few minutes and try again.';
+    return `${config.trainingSource === 'intervals' ? 'Intervals.icu' : 'Strava'} API rate limit reached. Wait a few minutes and try again.`;
   }
   if (msg.includes('ENOTFOUND') || msg.includes('fetch failed')) {
     return 'Network error. Check your internet connection and try again.';
@@ -126,7 +132,7 @@ const server = http.createServer(async (req, res) => {
     try {
       sendJson(res, 200, buildSummary());
     } catch (err) {
-      sendJson(res, 500, { error: 'Could not read activity data. Try running `npm run strava:fetch` first.' });
+      sendJson(res, 500, { error: 'Could not read activity data. Try running `npm run training:fetch` first.' });
     }
     return;
   }

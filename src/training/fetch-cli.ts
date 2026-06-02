@@ -1,5 +1,5 @@
-import { parseTrainingArgs } from '../training/cli';
-import { fetchAndSaveActivities } from '../training/fetch';
+import { parseTrainingArgs } from './cli';
+import { fetchAndSaveActivities } from './fetch';
 
 fetchAndSaveActivities(parseTrainingArgs(process.argv.slice(2))).catch((err: Error) => {
   console.error(err.message);

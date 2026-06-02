@@ -1,11 +1,21 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { config } from '../config';
-import { stravaGet } from '../strava/client';
 import { ensureDir } from '../utils/storage';
+import { createTrainingSource, getTrainingSourceForBundle } from '../training/source';
 
 export interface SourceActivity {
   id?: number;
+  source?: 'strava' | 'intervals';
+  sourceActivityId?: number;
+  originalActivityId?: string | null;
+  originalActivityUrl?: string | null;
+  sourceActivityUrl?: string | null;
+  rawActivityName?: string;
+  displayActivityName?: string;
+  workoutCode?: string | null;
+  workoutType?: string | null;
+  sessionTypeSuggestion?: string | null;
   name: string;
   distance: number;
   moving_time: number;
@@ -20,7 +30,11 @@ export interface SourceActivity {
   average_heartrate?: number;
   max_heartrate?: number;
   average_speed: number;
+  average_cadence?: number;
+  max_cadence?: number;
   calories?: number;
+  training_load?: number;
+  device_name?: string | null;
   start_latlng?: number[];
   map?: {
     summary_polyline?: string;
@@ -288,36 +302,20 @@ export async function fetchHistoricalWeather(activity: SourceActivity): Promise<
   }
 }
 
-async function fetchActivityDetailById(sourceActivityId: number): Promise<SourceActivity | null> {
-  try {
-    return await stravaGet<SourceActivity>(`/activities/${sourceActivityId}`);
-  } catch {
-    return null;
-  }
+async function fetchActivityLapsById(bundle: ActivityBundle, sourceActivityId: number): Promise<SourceLap[]> {
+  const source = createTrainingSource(getTrainingSourceForBundle(bundle.source));
+  return source.fetchActivityLaps ? source.fetchActivityLaps(sourceActivityId) : [];
 }
 
-async function fetchActivityLapsById(sourceActivityId: number): Promise<SourceLap[]> {
-  try {
-    return await stravaGet<SourceLap[]>(`/activities/${sourceActivityId}/laps`);
-  } catch {
-    return [];
-  }
-}
-
-async function fetchActivityStreamPayloadById(sourceActivityId: number): Promise<SourceStreamPayload | null> {
-  try {
-    return await stravaGet<SourceStreamPayload>(`/activities/${sourceActivityId}/streams`, {
-      keys: 'distance,time,heartrate,velocity_smooth,moving,temp',
-      key_by_type: 'true',
-    });
-  } catch {
-    return null;
-  }
+async function fetchActivityStreamPayloadById(bundle: ActivityBundle, sourceActivityId: number): Promise<SourceStreamPayload | null> {
+  const source = createTrainingSource(getTrainingSourceForBundle(bundle.source));
+  return source.fetchActivityStreams ? source.fetchActivityStreams(sourceActivityId) : null;
 }
 
 export async function resolveSourceActivity(bundle: ActivityBundle, sourceActivityId: number): Promise<ResolvedSourceActivity> {
   const bundledActivity = findActivityById(bundle, sourceActivityId);
-  const detailedActivity = await fetchActivityDetailById(sourceActivityId);
+  const source = createTrainingSource(getTrainingSourceForBundle(bundle.source));
+  const detailedActivity = source.fetchActivityDetail ? await source.fetchActivityDetail(sourceActivityId) : null;
   const activity = detailedActivity && bundledActivity
     ? {
       ...bundledActivity,
@@ -330,12 +328,12 @@ export async function resolveSourceActivity(bundle: ActivityBundle, sourceActivi
   }
 
   const bundledLaps = bundledActivity ? getActivityLaps(bundle, sourceActivityId) : [];
-  const laps = bundledLaps.length > 0 ? bundledLaps : await fetchActivityLapsById(sourceActivityId);
+  const laps = bundledLaps.length > 0 ? bundledLaps : await fetchActivityLapsById(bundle, sourceActivityId);
   const bundledStreamPayload = bundledActivity ? getActivityStreamPayloadFromBundle(bundle, sourceActivityId) : null;
   const cachedStreamPayload = readCachedActivityStreamPayload(sourceActivityId);
   const streamPayload = bundledStreamPayload
     ?? cachedStreamPayload
-    ?? await fetchActivityStreamPayloadById(sourceActivityId);
+    ?? await fetchActivityStreamPayloadById(bundle, sourceActivityId);
 
   if (streamPayload) {
     writeCachedActivityStreamPayload(sourceActivityId, streamPayload);

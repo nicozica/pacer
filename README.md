@@ -31,9 +31,18 @@ to insert the first two real sessions and refresh local export snapshots under `
 
 ---
 
-## Strava API
+## Training Data Source
 
-### 1. Create a Strava API application
+Pacer can fetch training activities from Strava or Intervals.icu. Strava remains the default.
+
+```env
+TRAINING_SOURCE=strava
+# TRAINING_SOURCE=intervals
+```
+
+### Strava setup
+
+Create a Strava API application
 
 Go to https://www.strava.com/settings/api and create an app.
 Set the **Authorization Callback Domain** to `localhost`.
@@ -46,7 +55,7 @@ STRAVA_CLIENT_SECRET=your_client_secret
 STRAVA_REDIRECT_URI=http://localhost
 ```
 
-### 2. Authenticate (one-time)
+Authenticate once:
 
 ```bash
 npm run strava:auth
@@ -59,10 +68,10 @@ This will:
 4. Paste that full URL or just the `code` into the terminal
 5. Tokens are saved to `storage/auth/strava-tokens.json`
 
-### 3. Fetch activities
+Fetch activities:
 
 ```bash
-npm run strava:fetch
+npm run training:fetch
 ```
 
 Downloads your latest activities and saves them to `storage/json/activities.latest.json`.
@@ -84,6 +93,43 @@ To change how many activities are fetched, set in `.env`:
 
 ```env
 STRAVA_ACTIVITIES_PER_PAGE=50
+```
+
+The legacy command still works and now uses the configured source:
+
+```bash
+npm run strava:fetch
+```
+
+### Intervals.icu setup
+
+Intervals.icu personal API key auth uses Basic Auth with username `API_KEY` and the API key as the password.
+
+```env
+TRAINING_SOURCE=intervals
+INTERVALS_API_KEY=your_intervals_api_key
+INTERVALS_ATHLETE_ID=0
+```
+
+Fetch and save the configured training source:
+
+```bash
+npm run training:fetch
+```
+
+Run a safe Intervals.icu smoke test without publishing:
+
+```bash
+npm run intervals:smoke -- --oldest=2026-05-01 --newest=2026-06-02
+npm run intervals:smoke -- --oldest=2026-05-01 --newest=2026-06-02 --write-raw
+```
+
+The optional raw response is written under `storage/json/debug/`, which is ignored by git.
+
+Compare Strava and Intervals.icu over the same date range before switching:
+
+```bash
+npm run intervals:compare -- --oldest=2026-05-01 --newest=2026-06-02
 ```
 
 ---
@@ -132,7 +178,8 @@ HEADLESS=false npm run capture
 
 ```
 src/
-  strava/       Strava API integration (auth, client, activity fetch)
+  training/     Training source adapters and fetch commands
+  strava/       Strava API integration (auth, client)
   config/       App configuration (reads .env)
   capture/      Playwright screenshot runner (secondary)
   auth/         Playwright browser session scripts (secondary)
