@@ -1,11 +1,16 @@
 import { config } from '../config';
-import type { SourceActivity } from '../session/source';
+import type { SourceActivity, SourceStreamPayload } from '../session/source';
 import { buildActivityNameMetadata } from './activity-names';
 import type { TrainingFetchOptions, TrainingSource } from './source';
 
 const API_BASE = 'https://intervals.icu/api/v1';
 
 type RawIntervalsActivity = Record<string, unknown>;
+type RawIntervalsStream = {
+  type?: unknown;
+  data?: unknown;
+  data2?: unknown;
+};
 
 function requireIntervalsApiKey(): string {
   if (!config.intervalsApiKey) {
@@ -306,6 +311,36 @@ async function intervalsGetText(path: string, params: Record<string, string | nu
   return response.text();
 }
 
+function intervalsActivityApiId(sourceActivityId: number): string {
+  return `i${sourceActivityId}`;
+}
+
+function normalizeIntervalsStreamPayload(payload: unknown): SourceStreamPayload | null {
+  if (!Array.isArray(payload)) {
+    return null;
+  }
+
+  const streams: SourceStreamPayload = {};
+
+  for (const entry of payload) {
+    if (!entry || typeof entry !== 'object') {
+      continue;
+    }
+
+    const raw = entry as RawIntervalsStream;
+    const type = stringValue(raw.type);
+    if (!type || !Array.isArray(raw.data)) {
+      continue;
+    }
+
+    streams[type] = Array.isArray(raw.data2)
+      ? { data: raw.data, data2: raw.data2 }
+      : raw.data;
+  }
+
+  return Object.keys(streams).length > 0 ? streams : null;
+}
+
 export async function fetchRawIntervalsActivitiesCsv(options: TrainingFetchOptions = {}): Promise<RawIntervalsActivity[]> {
   const range = withDefaultRange(options);
   const payload = await intervalsGetText(`/athlete/${encodeURIComponent(config.intervalsAthleteId)}/activities.csv`, range);
@@ -340,8 +375,16 @@ export function createIntervalsSource(): TrainingSource {
     },
     async fetchActivityDetail(sourceActivityId: number): Promise<SourceActivity | null> {
       try {
-        const raw = await intervalsGet<unknown>(`/activity/${sourceActivityId}`);
+        const raw = await intervalsGet<unknown>(`/activity/${intervalsActivityApiId(sourceActivityId)}`);
         return raw && typeof raw === 'object' ? normalizeIntervalsActivity(raw as RawIntervalsActivity) : null;
+      } catch {
+        return null;
+      }
+    },
+    async fetchActivityStreams(sourceActivityId: number): Promise<SourceStreamPayload | null> {
+      try {
+        const raw = await intervalsGet<unknown>(`/activity/${intervalsActivityApiId(sourceActivityId)}/streams`);
+        return normalizeIntervalsStreamPayload(raw);
       } catch {
         return null;
       }

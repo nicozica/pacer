@@ -51,7 +51,7 @@ export interface SourceLap {
 }
 
 export interface SourceStreamPayload {
-  [key: string]: { data?: unknown[] } | unknown[] | undefined;
+  [key: string]: { data?: unknown[]; data2?: unknown[] } | unknown[] | undefined;
 }
 
 export interface ActivityBundle {
@@ -247,10 +247,98 @@ export function paceSecPerKmFromSpeed(speedMetersPerSecond: number): number | nu
   return Math.round(1000 / speedMetersPerSecond);
 }
 
-export async function fetchHistoricalWeather(activity: SourceActivity): Promise<SourceWeather | null> {
-  if (!Array.isArray(activity.start_latlng) || activity.start_latlng.length < 2) return null;
+function getLatLngPointsFromPayload(streamPayload: SourceStreamPayload | null): [number, number][] {
+  const source = streamPayload?.latlng;
 
-  const [lat, lon] = activity.start_latlng;
+  if (!source) {
+    return [];
+  }
+
+  if (Array.isArray(source)) {
+    return source
+      .filter((value): value is [number, number] => (
+        Array.isArray(value)
+        && typeof value[0] === 'number'
+        && typeof value[1] === 'number'
+      ));
+  }
+
+  if (!Array.isArray(source.data) || !Array.isArray(source.data2)) {
+    return [];
+  }
+
+  const count = Math.min(source.data.length, source.data2.length);
+  const points: [number, number][] = [];
+
+  for (let index = 0; index < count; index += 1) {
+    const lat = source.data[index];
+    const lon = source.data2[index];
+
+    if (typeof lat === 'number' && typeof lon === 'number') {
+      points.push([lat, lon]);
+    }
+  }
+
+  return points;
+}
+
+function encodePolylineCoordinate(value: number): string {
+  let coordinate = value < 0 ? ~(value << 1) : value << 1;
+  let output = '';
+
+  while (coordinate >= 0x20) {
+    output += String.fromCharCode((0x20 | (coordinate & 0x1f)) + 63);
+    coordinate >>= 5;
+  }
+
+  return output + String.fromCharCode(coordinate + 63);
+}
+
+function encodePolyline(points: [number, number][]): string | null {
+  if (points.length < 4) {
+    return null;
+  }
+
+  let previousLat = 0;
+  let previousLon = 0;
+  let output = '';
+
+  for (const [lat, lon] of points) {
+    const encodedLat = Math.round(lat * 1e5);
+    const encodedLon = Math.round(lon * 1e5);
+    output += encodePolylineCoordinate(encodedLat - previousLat);
+    output += encodePolylineCoordinate(encodedLon - previousLon);
+    previousLat = encodedLat;
+    previousLon = encodedLon;
+  }
+
+  return output;
+}
+
+function enrichActivityFromStreams(activity: SourceActivity, streamPayload: SourceStreamPayload | null): SourceActivity {
+  const points = getLatLngPointsFromPayload(streamPayload);
+  if (points.length === 0) {
+    return activity;
+  }
+
+  const firstPoint = points[0];
+  const polyline = activity.map?.summary_polyline ?? encodePolyline(points);
+
+  return {
+    ...activity,
+    start_latlng: Array.isArray(activity.start_latlng) && activity.start_latlng.length >= 2
+      ? activity.start_latlng
+      : firstPoint,
+    map: polyline
+      ? { ...(activity.map ?? {}), summary_polyline: polyline }
+      : activity.map,
+  };
+}
+
+export async function fetchHistoricalWeather(activity: SourceActivity): Promise<SourceWeather | null> {
+  const [lat, lon] = Array.isArray(activity.start_latlng) && activity.start_latlng.length >= 2
+    ? activity.start_latlng
+    : [config.weatherDefaultLat, config.weatherDefaultLon];
   if (typeof lat !== 'number' || typeof lon !== 'number') return null;
 
   const day = activity.start_date.slice(0, 10);
@@ -341,9 +429,10 @@ export async function resolveSourceActivity(bundle: ActivityBundle, sourceActivi
 
   const bundledTempStream = bundledActivity ? getActivityTempStreamFromBundle(bundle, sourceActivityId) : null;
   const tempStream = bundledTempStream ?? getTempStreamFromPayload(streamPayload);
+  const enrichedActivity = enrichActivityFromStreams(activity, streamPayload);
 
   return {
-    activity,
+    activity: enrichedActivity,
     laps,
     tempStream,
     streamPayload,
