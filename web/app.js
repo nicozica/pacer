@@ -42,14 +42,33 @@ const WEATHER_CODE_LABELS = {
 const SESSION_TYPES = new Set([
   'Easy Run',
   'Long Run',
-  'Hills',
-  'Interval Session',
-  'Race',
   'Recovery Run',
+  'Hills',
   'Strides',
+  'Interval Session',
   'Tempo Session',
   'Time Trial',
+  'Race',
 ]);
+
+function normalizeSessionTypeAlias(value) {
+  const normalized = String(value ?? '').trim().replace(/\s+/g, ' ');
+  if (!normalized) return '';
+
+  for (const type of SESSION_TYPES) {
+    if (normalized.toLowerCase() === type.toLowerCase()) return type;
+  }
+
+  const label = normalized.toLowerCase();
+  if (/\bintervals?\s*(run|session)?\b/.test(label) || /\bfartlek\s*run\b/.test(label) || /\bfartlek\b/.test(label)) {
+    return 'Interval Session';
+  }
+  if (/\bthreshold\s*run\b/.test(label) || /\bthreshold\b/.test(label)) {
+    return 'Tempo Session';
+  }
+
+  return normalized;
+}
 
 const FORM_INPUT_IDS = [
   'session-type',
@@ -298,7 +317,12 @@ function normalizeNextRunWorkout(value) {
     throw new Error('Field "nextRunWorkout" must be an object or null.');
   }
 
-  const type = normalizeAiText(value.type, 'nextRunWorkout.type');
+  const title = normalizeAiText(value.title, 'nextRunWorkout.title');
+  const titleType = normalizeSessionTypeAlias(title);
+  const inputType = normalizeSessionTypeAlias(normalizeAiText(value.type, 'nextRunWorkout.type'));
+  const type = titleType && SESSION_TYPES.has(titleType) && (titleType !== title || !inputType)
+    ? titleType
+    : inputType;
   if (!SESSION_TYPES.has(type)) {
     throw new Error(`Field "nextRunWorkout.type" must be one of: ${Array.from(SESSION_TYPES).join(', ')}.`);
   }

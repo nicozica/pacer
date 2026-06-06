@@ -16,18 +16,52 @@ const GENERIC_RUN_NAMES = new Set([
   'run',
 ]);
 
+export const CANONICAL_SESSION_TYPES = [
+  'Easy Run',
+  'Long Run',
+  'Recovery Run',
+  'Hills',
+  'Strides',
+  'Interval Session',
+  'Tempo Session',
+  'Time Trial',
+  'Race',
+] as const;
+
 const SESSION_TYPE_ALIASES: Array<[RegExp, string]> = [
   [/\beasy\s*run\b/i, 'Easy Run'],
   [/\brecovery\s*run\b/i, 'Recovery Run'],
   [/\blong\s*run\b/i, 'Long Run'],
-  [/\bintervals?\b/i, 'Intervals'],
+  [/\bintervals?\s*(run|session)?\b/i, 'Interval Session'],
+  [/\bfartlek\s*run\b/i, 'Interval Session'],
+  [/\bfartlek\b/i, 'Interval Session'],
   [/\btempo\b/i, 'Tempo Session'],
+  [/\bthreshold\s*run\b/i, 'Tempo Session'],
   [/\bthreshold\b/i, 'Tempo Session'],
   [/\bstrides?\b/i, 'Strides'],
   [/\bhills?\b/i, 'Hills'],
   [/\brace\b/i, 'Race'],
   [/\btime\s*trial\b/i, 'Time Trial'],
 ];
+
+export function normalizeSessionTypeAlias(value: string | null | undefined): string | null {
+  const normalized = (value ?? '').trim().replace(/\s+/g, ' ');
+  if (!normalized) {
+    return null;
+  }
+
+  for (const canonical of CANONICAL_SESSION_TYPES) {
+    if (normalized.toLowerCase() === canonical.toLowerCase()) {
+      return canonical;
+    }
+  }
+
+  for (const [pattern, sessionType] of SESSION_TYPE_ALIASES) {
+    if (pattern.test(normalized)) return sessionType;
+  }
+
+  return normalized;
+}
 
 function stripLocationPrefix(value: string): string {
   let normalized = value.trim();

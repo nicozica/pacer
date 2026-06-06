@@ -62,21 +62,10 @@ import { ensureDir } from '../utils/storage';
 import { deployRunSite } from './deploy';
 import { deriveActivityContext, isRideActivity, isTrainingActivity } from '../activity-context';
 import { getActivitySourceLabel, getTrainingSourceForBundle } from '../training/source';
-import { buildActivityNameMetadata } from '../training/activity-names';
+import { CANONICAL_SESSION_TYPES, buildActivityNameMetadata, normalizeSessionTypeAlias } from '../training/activity-names';
 
 const DAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-const SESSION_TYPES = new Set([
-  'Easy Run',
-  'Long Run',
-  'Hills',
-  'Intervals',
-  'Interval Session',
-  'Race',
-  'Recovery Run',
-  'Strides',
-  'Tempo Session',
-  'Time Trial',
-]);
+const SESSION_TYPES: Set<string> = new Set(CANONICAL_SESSION_TYPES);
 
 function blankManual(): SessionManualInput {
   return {
@@ -251,9 +240,31 @@ function getActivityRawName(activity: SourceActivity): string | null {
   return activity.rawActivityName ?? buildActivityNameMetadata(activity.name, getActivityType(activity)).rawActivityName ?? null;
 }
 
+function getCanonicalSessionType(value: string | null | undefined): string | null {
+  const normalized = normalizeSessionTypeAlias(value);
+  return normalized && SESSION_TYPES.has(normalized) ? normalized : null;
+}
+
 function getActivitySessionTypeSuggestion(activity: SourceActivity): string | null {
-  const suggestion = activity.sessionTypeSuggestion ?? buildActivityNameMetadata(activity.name, getActivityType(activity)).sessionTypeSuggestion;
-  return suggestion && SESSION_TYPES.has(suggestion) ? suggestion : null;
+  const metadata = buildActivityNameMetadata(activity.name, getActivityType(activity));
+  const candidates = [
+    activity.sessionTypeSuggestion,
+    activity.displayActivityName,
+    activity.rawActivityName,
+    activity.name,
+    metadata.sessionTypeSuggestion,
+    metadata.displayActivityName,
+    metadata.rawActivityName,
+  ];
+
+  for (const candidate of candidates) {
+    const sessionType = getCanonicalSessionType(candidate);
+    if (sessionType) {
+      return sessionType;
+    }
+  }
+
+  return null;
 }
 
 function getActivityWorkoutCode(activity: SourceActivity): string | null {
@@ -340,11 +351,15 @@ function sanitizeNextRunWorkout(value: unknown): SessionNextRunWorkout | null {
     throw new Error('nextRunWorkout must be an object or null.');
   }
 
-  const type = sanitizeText((value as { type?: unknown }).type);
+  const title = sanitizeText((value as { title?: unknown }).title);
+  const titleType = normalizeSessionTypeAlias(title);
+  const inputType = normalizeSessionTypeAlias(sanitizeText((value as { type?: unknown }).type));
+  const type = titleType && SESSION_TYPES.has(titleType) && (titleType !== title || !inputType)
+    ? titleType
+    : inputType ?? '';
   if (!SESSION_TYPES.has(type)) {
     throw new Error(`nextRunWorkout.type must be one of: ${Array.from(SESSION_TYPES).join(', ')}.`);
   }
-  const title = sanitizeText((value as { title?: unknown }).title);
 
   const rawBlocks = (value as { blocks?: unknown }).blocks;
   if (!Array.isArray(rawBlocks)) {
@@ -470,7 +485,12 @@ function buildEditorSession(bundle: ActivityBundle, sourceActivityId: number): E
     selectedSourceActivityId: sourceActivityId,
     savedSessionId: stored?.core.id ?? null,
     source: buildSourceSummary(bundle, activity, stored),
-    manual: stored?.manual ?? suggestedManual,
+    manual: stored?.manual
+      ? {
+        ...stored.manual,
+        sessionType: normalizeSessionTypeAlias(stored.manual.sessionType) ?? '',
+      }
+      : suggestedManual,
     files: stored?.files ?? blankFiles(),
     ai: stored
       ? {
@@ -653,7 +673,11 @@ function compactNextRunSummary(summary: string, workout: SessionNextRunWorkout |
 function withNextRunWorkoutTitle(workout: SessionNextRunWorkout | null, title: string): SessionNextRunWorkout | null {
   if (!workout) return null;
   const normalizedTitle = workout.title || title.trim();
-  const normalizedType = /\bintervals?\b/i.test(`${normalizedTitle} ${workout.type}`) ? 'Intervals' : workout.type;
+  const titleType = normalizeSessionTypeAlias(normalizedTitle);
+  const inputType = normalizeSessionTypeAlias(workout.type);
+  const normalizedType = titleType && SESSION_TYPES.has(titleType) && (titleType !== normalizedTitle || !inputType)
+    ? titleType
+    : inputType ?? workout.type;
   return {
     ...(normalizedTitle ? { title: normalizedTitle } : {}),
     type: normalizedType,
@@ -699,6 +723,10 @@ function buildWeeklySnapshotFromSessions(sessions: StoredSession[]): WeeklySnaps
 
 function buildLatestExport(session: StoredSession, sourceActivity: SourceActivity | null = null): SessionExportLatest {
   const route = buildRouteMetadata(session.core.polyline);
+  const manual = {
+    ...session.manual,
+    sessionType: normalizeSessionTypeAlias(session.manual.sessionType) ?? '',
+  };
 
   return {
     sessionId: session.core.id,
@@ -725,7 +753,7 @@ function buildLatestExport(session: StoredSession, sourceActivity: SourceActivit
     startLat: route.startLat,
     startLon: route.startLon,
     routeSvgPoints: route.routeSvgPoints,
-    manual: session.manual,
+    manual,
     files: session.files,
     ai: {
       signalTitle: session.ai.signalTitle,
@@ -755,8 +783,8 @@ function buildNextRunExport(session: StoredSession): SessionExportNextRun | null
     fromSessionId: session.core.id,
     sessionDate: session.core.sessionDate,
     title: session.ai.nextRunTitle,
-    summary: compactNextRunSummary(session.ai.nextRunSummary, session.ai.nextRunWorkout),
-    type: session.ai.nextRunWorkout?.type ?? null,
+    summary: compactNextRunSummary(session.ai.nextRunSummary, workout),
+    type: workout?.type ?? null,
     durationMin: session.ai.nextRunDurationMin,
     durationMax: session.ai.nextRunDurationMax,
     distanceKm: session.ai.nextRunDistanceKm,
@@ -774,7 +802,7 @@ function buildArchiveList(sessions: StoredSession[]): SessionExportArchiveList {
     startDateLocal: session.core.startDateLocal,
     title: session.core.title,
     sport: session.core.sport,
-    sessionType: session.manual.sessionType || null,
+    sessionType: normalizeSessionTypeAlias(session.manual.sessionType),
     distanceM: session.core.distanceM,
     movingTimeS: session.core.movingTimeS,
     paceSecPerKm: session.core.paceSecPerKm,
@@ -812,7 +840,7 @@ function hasAiContent(ai: SessionAIInput): boolean {
 
 function sanitizeManualInput(input: SaveSessionInput['manual']): SessionManualInput {
   return {
-    sessionType: sanitizeText(input?.sessionType),
+    sessionType: normalizeSessionTypeAlias(sanitizeText(input?.sessionType)) ?? '',
     legs: sanitizeText(input?.legs),
     sleepScore: sanitizeOptionalNumber(input?.sleepScore),
     restedness: sanitizeText(input?.restedness),
