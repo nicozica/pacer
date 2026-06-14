@@ -648,7 +648,7 @@ async function hydrateAppState(options = {}) {
   updateBrief();
 }
 
-async function refreshFromStrava(options = {}) {
+async function refreshTrainingData(options = {}) {
   const { updateButton = true, showFetchError = true } = options;
   const btn = document.getElementById('btn-refresh');
   const selectedSourceActivityId = currentEditorSession?.selectedSourceActivityId ?? null;
@@ -660,7 +660,7 @@ async function refreshFromStrava(options = {}) {
   }
 
   hideError();
-  setLastUpdatedMessage('Refreshing from Strava…');
+  setLastUpdatedMessage('Refreshing training data…');
 
   try {
     await hydrateAppState({
@@ -668,7 +668,7 @@ async function refreshFromStrava(options = {}) {
       sourceActivityId: selectedSourceActivityId,
     });
   } catch (err) {
-    if (document.getElementById('last-updated').textContent === 'Refreshing from Strava…') {
+    if (document.getElementById('last-updated').textContent === 'Refreshing training data…') {
       setLastUpdatedMessage(previousLastUpdated || 'No data loaded');
     }
     if (showFetchError) {
@@ -692,7 +692,7 @@ async function refreshAndPublish() {
   btn.textContent = '↺ Publishing…';
   hideError();
   hideNotice();
-  setLastUpdatedMessage('Refreshing from Strava and publishing…');
+  setLastUpdatedMessage('Refreshing training data and publishing…');
 
   try {
     const response = await fetchJson('/api/refresh-and-publish', { method: 'POST' });
@@ -714,10 +714,10 @@ async function refreshAndPublish() {
         : '';
       showError(`Refresh completed, but publish failed. ${publishStatus.message}.${logSuffix}${tailSuffix}`);
     } else {
-      showNotice('Strava refreshed and snapshots exported.');
+      showNotice('Training data refreshed and snapshots exported.');
     }
   } catch (err) {
-    if (document.getElementById('last-updated').textContent === 'Refreshing from Strava and publishing…') {
+    if (document.getElementById('last-updated').textContent === 'Refreshing training data and publishing…') {
       setLastUpdatedMessage(previousLastUpdated || 'No data loaded');
     }
     showError(err.message || 'Refresh and publish failed.');
@@ -759,7 +759,7 @@ function renderData() {
   const formattedFetchedAt = formatTimestamp(fetchedAt);
   updatedEl.textContent = fetchedAt
     ? `Last updated: ${formattedFetchedAt || fetchedAt}`
-    : 'No data yet — run npm run strava:fetch';
+    : 'No data yet — run npm run training:fetch';
 
   document.getElementById('latest-content').innerHTML = activityHtml(latestActivity);
   document.getElementById('run-content').innerHTML = activityHtml(latestRun);
@@ -1255,10 +1255,10 @@ async function initApp() {
   setButtonsDisabled(true);
   hideError();
   hideNotice();
-  setLastUpdatedMessage('Refreshing from Strava…');
+  setLastUpdatedMessage('Refreshing training data…');
 
   try {
-    await refreshFromStrava({
+    await refreshTrainingData({
       updateButton: false,
       showFetchError: false,
     });
@@ -1266,7 +1266,7 @@ async function initApp() {
     try {
       setLastUpdatedMessage('Loading cached data…');
       await hydrateAppState();
-      showError(`Could not refresh from Strava. Loaded cached data instead. ${refreshErr.message}`);
+      showError(`Could not refresh training data. Loaded cached data instead. ${refreshErr.message}`);
     } catch (fallbackErr) {
       showError(`Could not load Pacer state: ${fallbackErr.message}`);
       setLastUpdatedMessage('No data loaded');
