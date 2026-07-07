@@ -7,6 +7,8 @@ let currentWeather = '—';
 let currentEditorBootstrap = null;
 let currentEditorSession = null;
 let currentAiImport = null;
+let editorLoadRequestId = 0;
+let isEditorResolving = false;
 
 const WEATHER_CODE_LABELS = {
   0: 'clear',
@@ -921,8 +923,38 @@ function renderEditorState() {
 }
 
 async function reloadEditorState(sourceActivityId = null) {
-  currentEditorBootstrap = await loadEditorBootstrap(sourceActivityId);
-  currentEditorSession = currentEditorBootstrap.selectedSession;
+  const requestId = ++editorLoadRequestId;
+  const previousBootstrap = currentEditorBootstrap;
+  const previousLastUpdated = document.getElementById('last-updated').textContent;
+  currentEditorSession = null;
+  isEditorResolving = true;
+  if (previousBootstrap) {
+    currentEditorBootstrap = {
+      ...previousBootstrap,
+      selectedSession: null,
+    };
+  }
+  setButtonsDisabled(true);
+  setLastUpdatedMessage('Resolving activity detail and streams…');
+  updateBrief();
+
+  try {
+    const nextBootstrap = await loadEditorBootstrap(sourceActivityId);
+    if (requestId !== editorLoadRequestId) {
+      return;
+    }
+
+    currentEditorBootstrap = nextBootstrap;
+    currentEditorSession = currentEditorBootstrap.selectedSession;
+  } finally {
+    if (requestId === editorLoadRequestId) {
+      isEditorResolving = false;
+      if (document.getElementById('last-updated').textContent === 'Resolving activity detail and streams…') {
+        setLastUpdatedMessage(previousLastUpdated || '');
+      }
+    }
+  }
+
   renderEditorState();
 }
 
@@ -1068,6 +1100,7 @@ async function importAiJsonFile(file) {
 
 function selectedSessionText() {
   const session = currentEditorSession?.source;
+  if (isEditorResolving) return 'Selected session: resolving activity detail and streams…';
   if (!session) return 'Selected session: none';
 
   const lines = [`Selected session: ${session.title} (${session.sport}) — ${session.sessionDate}`];
@@ -1124,7 +1157,9 @@ function buildBriefText() {
   lines.push('');
   lines.push('--- LAPS ---');
   const laps = Array.isArray(currentEditorSession?.laps) ? currentEditorSession.laps : [];
-  if (laps.length === 0) {
+  if (isEditorResolving) {
+    lines.push('Laps: resolving activity detail and streams…');
+  } else if (laps.length === 0) {
     lines.push('Laps: —');
   } else {
     laps.forEach((lap) => lines.push(lapText(lap)));
@@ -1192,6 +1227,9 @@ document.getElementById('source-activity').addEventListener('change', async (eve
   try {
     await reloadEditorState(sourceActivityId);
   } catch (err) {
+    if (!currentEditorSession) {
+      renderEditorState();
+    }
     showError(err.message || 'Could not load that session.');
   }
 });

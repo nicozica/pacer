@@ -169,7 +169,7 @@ const server = http.createServer(async (req, res) => {
     try {
       const sourceActivityIdRaw = requestUrl.searchParams.get('sourceActivityId');
       const sourceActivityId = sourceActivityIdRaw ? parseInt(sourceActivityIdRaw, 10) : null;
-      sendJson(res, 200, getEditorBootstrap(Number.isNaN(sourceActivityId ?? NaN) ? null : sourceActivityId));
+      sendJson(res, 200, await getEditorBootstrap(Number.isNaN(sourceActivityId ?? NaN) ? null : sourceActivityId));
     } catch (err) {
       sendJson(res, 500, { error: (err as Error).message });
     }

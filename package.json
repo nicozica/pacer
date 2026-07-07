@@ -14,6 +14,7 @@
     "sessions:rebuild-splits": "ts-node --transpile-only src/session/rebuild-km-splits-cli.ts",
     "sessions:seed": "ts-node --transpile-only src/session/seed-cli.ts",
     "sessions:seed:prod": "node dist/session/seed-cli.js",
+    "test:session-enrichment": "ts-node --transpile-only src/session/enrichment-regression-cli.ts",
     "training:fetch": "ts-node --transpile-only src/training/fetch-cli.ts",
     "training:fetch:prod": "node dist/training/fetch-cli.js",
     "intervals:smoke": "ts-node --transpile-only src/training/intervals-smoke-cli.ts",

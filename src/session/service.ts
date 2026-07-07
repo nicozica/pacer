@@ -419,22 +419,6 @@ function buildRecentRunOptions(bundle: ActivityBundle): RecentRunOption[] {
     });
 }
 
-function buildLaps(bundle: ActivityBundle, activityId: number, existing: StoredSession | null): SessionLapRecord[] {
-  const liveLaps = getActivityLaps(bundle, activityId);
-  if (liveLaps.length > 0) {
-    return liveLaps.map((lap, index) => ({
-      id: null,
-      lapIndex: typeof lap.lap_index === 'number' ? lap.lap_index : index + 1,
-      distanceM: typeof lap.distance === 'number' ? roundOneDecimal(lap.distance) : null,
-      durationS: typeof lap.moving_time === 'number' ? Math.round(lap.moving_time) : null,
-      paceSecPerKm: typeof lap.average_speed === 'number' ? paceSecPerKmFromSpeed(lap.average_speed) : null,
-      hrAvg: typeof lap.average_heartrate === 'number' ? Math.round(lap.average_heartrate) : null,
-    }));
-  }
-
-  return existing?.laps ?? [];
-}
-
 function buildSourceSummary(bundle: ActivityBundle, activity: SourceActivity, stored: StoredSession | null): SessionSourceSummary {
   const sessionDate = (activity.start_date_local || activity.start_date).slice(0, 10);
   const paceSecPerKm = paceSecPerKmFromSpeed(activity.average_speed);
@@ -469,17 +453,29 @@ function buildSourceSummary(bundle: ActivityBundle, activity: SourceActivity, st
   };
 }
 
-function buildEditorSession(bundle: ActivityBundle, sourceActivityId: number): EditorSession {
-  const activity = findActivityById(bundle, sourceActivityId);
-  if (!activity || typeof activity.id !== 'number') {
-    throw new Error(`Could not find source activity ${sourceActivityId}.`);
-  }
+function defaultTcxFilename(activity: SourceActivity, sourceActivityId: number): string {
+  const sessionDate = (activity.start_date_local || activity.start_date).slice(0, 10);
+  return `pacer-${sessionDate}-${sourceActivityId}.tcx`;
+}
 
+async function buildEditorSession(bundle: ActivityBundle, sourceActivityId: number): Promise<EditorSession> {
+  const resolvedSource = await resolveSourceActivity(bundle, sourceActivityId);
+  const activity = resolvedSource.activity;
   const { session: stored } = findStoredSessionForActivity(activity);
   const suggestedSessionType = getActivitySessionTypeSuggestion(activity);
   const suggestedManual = suggestedSessionType
     ? { ...blankManual(), sessionType: suggestedSessionType }
     : blankManual();
+  const files = stored?.files ?? {
+    ...blankFiles(),
+    tcxFilename: defaultTcxFilename(activity, sourceActivityId),
+  };
+  const normalizedLaps = buildNormalizedLaps({
+    sourceLaps: resolvedSource.laps,
+    streamPayload: resolvedSource.streamPayload,
+    existing: stored,
+    tcxFilename: files.tcxFilename,
+  });
 
   return {
     selectedSourceActivityId: sourceActivityId,
@@ -491,7 +487,7 @@ function buildEditorSession(bundle: ActivityBundle, sourceActivityId: number): E
         sessionType: normalizeSessionTypeAlias(stored.manual.sessionType) ?? '',
       }
       : suggestedManual,
-    files: stored?.files ?? blankFiles(),
+    files,
     ai: stored
       ? {
         signalTitle: stored.ai.signalTitle,
@@ -509,7 +505,8 @@ function buildEditorSession(bundle: ActivityBundle, sourceActivityId: number): E
         weekSummary: stored.ai.weekSummary,
       }
       : blankAI(),
-    laps: buildLaps(bundle, sourceActivityId, stored),
+    laps: normalizedLaps.laps,
+    lapSource: normalizedLaps.lapSource,
     updatedAt: stored?.core.updatedAt ?? null,
   };
 }
@@ -895,7 +892,73 @@ function mapSourceLapsToRecords(laps: ReturnType<typeof getActivityLaps>): Sessi
     durationS: typeof lap.moving_time === 'number' ? Math.round(lap.moving_time) : null,
     paceSecPerKm: typeof lap.average_speed === 'number' ? paceSecPerKmFromSpeed(lap.average_speed) : null,
     hrAvg: typeof lap.average_heartrate === 'number' ? Math.round(lap.average_heartrate) : null,
+    lapSource: 'intervals',
   }));
+}
+
+function extractXmlNumber(source: string, tagName: string): number | null {
+  const match = source.match(new RegExp(`<${tagName}[^>]*>\\s*([\\d.]+)\\s*</${tagName}>`, 'i'));
+  if (!match) return null;
+  const parsed = Number(match[1]);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+export function parseTcxLapsFromText(text: string): SessionLapRecord[] {
+  const laps: SessionLapRecord[] = [];
+  const lapMatches = text.matchAll(/<Lap\b[\s\S]*?<\/Lap>/gi);
+
+  for (const match of lapMatches) {
+    const lapXml = match[0];
+    const distanceM = extractXmlNumber(lapXml, 'DistanceMeters');
+    const durationS = extractXmlNumber(lapXml, 'TotalTimeSeconds');
+    const averageHr = lapXml.match(/<AverageHeartRateBpm>\s*<Value>\s*([\d.]+)\s*<\/Value>\s*<\/AverageHeartRateBpm>/i);
+    const hrAvg = averageHr ? Number(averageHr[1]) : null;
+    const paceSecPerKm = distanceM && durationS && distanceM > 0
+      ? Math.round((durationS / distanceM) * 1000)
+      : null;
+
+    if (!distanceM && !durationS && !paceSecPerKm && !hrAvg) {
+      continue;
+    }
+
+    laps.push({
+      id: null,
+      lapIndex: laps.length + 1,
+      distanceM: typeof distanceM === 'number' ? roundOneDecimal(distanceM) : null,
+      durationS: typeof durationS === 'number' ? Math.round(durationS) : null,
+      paceSecPerKm,
+      hrAvg: typeof hrAvg === 'number' && Number.isFinite(hrAvg) ? Math.round(hrAvg) : null,
+      lapSource: 'tcx',
+    });
+  }
+
+  return laps;
+}
+
+function resolveTcxFilePath(fileName: string | null | undefined): string | null {
+  const normalized = path.basename((fileName ?? '').trim());
+  if (!normalized) return null;
+
+  const candidates = [
+    path.join(config.storageDir, 'files', 'tcx', normalized),
+    path.join(config.storageDir, 'uploads', 'tcx', normalized),
+    path.join(config.storageDir, 'tcx', normalized),
+    path.join(config.storageDir, 'files', normalized),
+    path.join(config.storageDir, 'uploads', normalized),
+  ];
+
+  return candidates.find((candidate) => fs.existsSync(candidate)) ?? null;
+}
+
+function readTcxLaps(fileName: string | null | undefined): SessionLapRecord[] {
+  const filePath = resolveTcxFilePath(fileName);
+  if (!filePath) return [];
+
+  try {
+    return parseTcxLapsFromText(fs.readFileSync(filePath, 'utf-8'));
+  } catch {
+    return [];
+  }
 }
 
 function readNumberStream(payload: SourceStreamPayload | null, key: string): number[] {
@@ -1050,31 +1113,50 @@ function buildKilometerSplitsFromStreams(streamPayload: SourceStreamPayload | nu
       durationS,
       paceSecPerKm,
       hrAvg: averageHeartRateForRange(normalizedDistances, heartRates, moving, startDistanceM, endDistanceM),
+      lapSource: 'intervals',
     });
   }
 
   return laps;
 }
 
-function buildPersistedLaps(
-  laps: ReturnType<typeof getActivityLaps>,
-  streamPayload: SourceStreamPayload | null,
-  existing: StoredSession | null
-): SessionLapRecord[] {
-  const kilometerSplits = buildKilometerSplitsFromStreams(streamPayload);
+export function buildNormalizedLaps(input: {
+  sourceLaps?: ReturnType<typeof getActivityLaps>;
+  streamPayload?: SourceStreamPayload | null;
+  existing?: StoredSession | null;
+  tcxFilename?: string | null;
+  tcxLaps?: SessionLapRecord[];
+}): { laps: SessionLapRecord[]; lapSource: 'intervals' | 'tcx' | 'none' } {
+  const kilometerSplits = buildKilometerSplitsFromStreams(input.streamPayload ?? null);
 
   if (kilometerSplits.length > 0) {
-    return kilometerSplits;
+    return { laps: kilometerSplits, lapSource: 'intervals' };
   }
 
-  if (laps.length > 0) {
-    return mapSourceLapsToRecords(laps);
+  if (input.sourceLaps && input.sourceLaps.length > 0) {
+    return { laps: mapSourceLapsToRecords(input.sourceLaps), lapSource: 'intervals' };
   }
 
-  return existing?.laps ?? [];
+  const tcxLaps = input.tcxLaps ?? readTcxLaps(input.tcxFilename);
+  if (tcxLaps.length > 0) {
+    return {
+      laps: tcxLaps.map((lap, index) => ({ ...lap, id: null, lapIndex: index + 1, lapSource: 'tcx' })),
+      lapSource: 'tcx',
+    };
+  }
+
+  if (input.existing?.laps.length) {
+    const source = input.existing.laps[0]?.lapSource;
+    return {
+      laps: input.existing.laps,
+      lapSource: source === 'intervals' || source === 'tcx' ? source : 'none',
+    };
+  }
+
+  return { laps: [], lapSource: 'none' };
 }
 
-export function getEditorBootstrap(sourceActivityId: number | null = null): EditorBootstrap {
+export async function getEditorBootstrap(sourceActivityId: number | null = null): Promise<EditorBootstrap> {
   initSessionStore();
   const bundle = readActivityBundle();
   if (!bundle) {
@@ -1090,7 +1172,7 @@ export function getEditorBootstrap(sourceActivityId: number | null = null): Edit
 
   return {
     recentRuns,
-    selectedSession: selectedSourceActivityId === null ? null : buildEditorSession(bundle, selectedSourceActivityId),
+    selectedSession: selectedSourceActivityId === null ? null : await buildEditorSession(bundle, selectedSourceActivityId),
     latestPublishedAt: getLatestPublishedDate() ?? getLatestWeeklySnapshot()?.snapshotDate ?? null,
   };
 }
@@ -1126,6 +1208,13 @@ export async function saveSession(input: SaveSessionInput, options: SaveSessionO
   const weather = await resolveWeather(activity, resolvedSource.tempStream, existing);
   const sessionDate = (activity.start_date_local || activity.start_date).slice(0, 10);
 
+  const normalizedLaps = buildNormalizedLaps({
+    sourceLaps: resolvedSource.laps,
+    streamPayload: resolvedSource.streamPayload,
+    existing,
+    tcxFilename: files.tcxFilename,
+  });
+
   const savedSession = saveStoredSession({
     core: {
       sessionDate,
@@ -1153,7 +1242,7 @@ export async function saveSession(input: SaveSessionInput, options: SaveSessionO
       ...ai,
       ...aiMetadata,
     },
-    laps: buildPersistedLaps(resolvedSource.laps, resolvedSource.streamPayload, existing),
+    laps: normalizedLaps.laps,
   });
 
   console.info('[Pacer service] Session persisted', {
@@ -1206,7 +1295,7 @@ export async function saveSession(input: SaveSessionInput, options: SaveSessionO
 
   return {
     session,
-    bootstrap: getEditorBootstrap(input.sourceActivityId),
+    bootstrap: await getEditorBootstrap(input.sourceActivityId),
     publishArtifacts,
     publishStatus,
   };

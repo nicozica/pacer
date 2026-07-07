@@ -47,6 +47,7 @@ export interface SessionLapRecord {
   durationS: number | null;
   paceSecPerKm: number | null;
   hrAvg: number | null;
+  lapSource?: 'intervals' | 'tcx' | 'none';
 }
 
 export interface SessionCoreRecord {
@@ -137,6 +138,7 @@ export interface EditorSession {
   files: SessionFilesInput;
   ai: SessionAIInput;
   laps: SessionLapRecord[];
+  lapSource: 'intervals' | 'tcx' | 'none';
   updatedAt: string | null;
 }
 

@@ -168,6 +168,7 @@ function migrate(db: SqliteDatabase): void {
           duration_s INTEGER,
           pace_sec_per_km REAL,
           hr_avg INTEGER,
+          lap_source TEXT,
           FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
         );
 
@@ -289,6 +290,20 @@ function migrate(db: SqliteDatabase): void {
 
     migrationV5();
   }
+
+  if (currentVersion < 6) {
+    const migrationV6 = db.transaction(() => {
+      if (!columnExists(db, 'session_laps', 'lap_source')) {
+        db.exec(`
+          ALTER TABLE session_laps ADD COLUMN lap_source TEXT;
+        `);
+      }
+
+      db.pragma('user_version = 6');
+    });
+
+    migrationV6();
+  }
 }
 
 function toNullableText(value: unknown): string | null {
@@ -367,7 +382,7 @@ function mapSession(db: SqliteDatabase, coreRow: Record<string, unknown>): Store
   const core = mapCoreRow(coreRow);
 
   const laps = db.prepare(`
-    SELECT id, lap_index, distance_m, duration_s, pace_sec_per_km, hr_avg
+    SELECT id, lap_index, distance_m, duration_s, pace_sec_per_km, hr_avg, lap_source
     FROM session_laps
     WHERE session_id = ?
     ORDER BY lap_index ASC
@@ -403,6 +418,7 @@ function mapSession(db: SqliteDatabase, coreRow: Record<string, unknown>): Store
       durationS: typeof row.duration_s === 'number' ? row.duration_s : null,
       paceSecPerKm: typeof row.pace_sec_per_km === 'number' ? row.pace_sec_per_km : null,
       hrAvg: typeof row.hr_avg === 'number' ? row.hr_avg : null,
+      lapSource: row.lap_source === 'intervals' || row.lap_source === 'tcx' ? row.lap_source : 'none',
     })),
     manual: {
       sessionType: manualRow && typeof manualRow.session_type === 'string' ? manualRow.session_type : '',
@@ -742,8 +758,8 @@ export function saveStoredSession(input: PersistedSessionInput): StoredSession {
     `).run(sessionId);
 
     const lapStatement = db.prepare(`
-      INSERT INTO session_laps (session_id, lap_index, distance_m, duration_s, pace_sec_per_km, hr_avg)
-      VALUES (?, ?, ?, ?, ?, ?)
+      INSERT INTO session_laps (session_id, lap_index, distance_m, duration_s, pace_sec_per_km, hr_avg, lap_source)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
     `);
 
     for (const lap of input.laps) {
@@ -754,6 +770,7 @@ export function saveStoredSession(input: PersistedSessionInput): StoredSession {
         lap.durationS,
         lap.paceSecPerKm,
         lap.hrAvg,
+        lap.lapSource ?? 'none',
       );
     }
   });
