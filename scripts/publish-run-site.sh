@@ -3,7 +3,16 @@
 set -Eeuo pipefail
 
 PACER_REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-RUN_REPO="${RUN_REPO:-$PACER_REPO/../run-nico-ar}"
+LOCAL_SIBLING_RUN_REPO="$PACER_REPO/../run-nico-ar"
+if [[ -n "${RUN_REPO:-}" ]]; then
+  RUN_REPO="$RUN_REPO"
+elif [[ -d "$LOCAL_SIBLING_RUN_REPO" ]]; then
+  RUN_REPO="$LOCAL_SIBLING_RUN_REPO"
+else
+  echo "RUN_REPO is required when Pacer is not checked out beside run-nico-ar."
+  echo "Set RUN_REPO to the run.nico.ar checkout before publishing."
+  exit 1
+fi
 RUN_SITE_DEPLOY_TARGET="${RUN_SITE_DEPLOY_TARGET:-pizero:/srv/data/www/run.nico.ar/}"
 RUN_SITE_DEPLOY_HOST="${RUN_SITE_DEPLOY_HOST:-${RUN_SITE_DEPLOY_TARGET%%:*}}"
 RUN_SITE_DEPLOY_REMOTE_DIR="${RUN_SITE_DEPLOY_REMOTE_DIR:-${RUN_SITE_DEPLOY_TARGET#*:}}"

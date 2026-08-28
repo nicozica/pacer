@@ -1,4 +1,5 @@
 import * as dotenv from 'dotenv';
+import * as fs from 'fs';
 import * as path from 'path';
 
 dotenv.config();
@@ -13,6 +14,21 @@ function parseIntWithFallback(input: string | undefined, fallback: number): numb
   if (!input) return fallback;
   const n = parseInt(input, 10);
   return Number.isNaN(n) ? fallback : n;
+}
+
+function resolveRunSiteRacesFile(): string | null {
+  const explicitFile = process.env.RUN_SITE_RACES_FILE?.trim();
+  if (explicitFile) {
+    return path.resolve(explicitFile);
+  }
+
+  const runRepo = process.env.RUN_REPO?.trim();
+  if (runRepo) {
+    return path.resolve(runRepo, 'data', 'manual', 'races.json');
+  }
+
+  const localSiblingFile = path.resolve(process.cwd(), '..', 'run-nico-ar', 'data', 'manual', 'races.json');
+  return fs.existsSync(localSiblingFile) ? localSiblingFile : null;
 }
 
 export const config = {
@@ -44,6 +60,7 @@ export const config = {
     process.env.RUN_SITE_DEPLOY_SCRIPT
     ?? path.resolve(process.cwd(), 'scripts', 'publish-run-site.sh'),
   runSiteDeployTimeoutMs: parseIntWithFallback(process.env.RUN_SITE_DEPLOY_TIMEOUT_MS, 300_000),
+  runSiteRacesFile: resolveRunSiteRacesFile(),
 
   // Optional weather fallback location (used when activity has no coordinates)
   weatherDefaultLat: parseOptionalFloat(process.env.WEATHER_DEFAULT_LAT),

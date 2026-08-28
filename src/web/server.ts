@@ -7,6 +7,7 @@ import { fetchAndSaveActivities } from '../training/fetch';
 import { getEditorBootstrap, publishSnapshots, saveSession } from '../session/service';
 import { deployRunSite } from '../session/deploy';
 import { SaveSessionInput } from '../session/types';
+import { createRace, deleteRace, listRaces, RaceInput, updateRace } from '../races/service';
 
 const WEB_DIR = path.resolve(process.cwd(), 'web');
 
@@ -161,6 +162,48 @@ const server = http.createServer(async (req, res) => {
       });
     } catch (err) {
       sendJson(res, 500, { error: friendlyError(err as Error) });
+    }
+    return;
+  }
+
+  if (url === '/api/races' && method === 'GET') {
+    try {
+      sendJson(res, 200, { races: listRaces() });
+    } catch (err) {
+      sendJson(res, 500, { error: (err as Error).message });
+    }
+    return;
+  }
+
+  if (url === '/api/races' && method === 'POST') {
+    try {
+      const race = createRace(await readJsonBody<RaceInput>(req));
+      sendJson(res, 201, { race, races: listRaces() });
+    } catch (err) {
+      sendJson(res, 400, { error: (err as Error).message });
+    }
+    return;
+  }
+
+  if (url === '/api/races/publish' && method === 'POST') {
+    const publishStatus = await deployRunSite();
+    sendJson(res, publishStatus.ok ? 200 : 500, { ok: publishStatus.ok, publishStatus });
+    return;
+  }
+
+  if (url.startsWith('/api/races/') && (method === 'PUT' || method === 'DELETE')) {
+    const slug = decodeURIComponent(url.slice('/api/races/'.length));
+    try {
+      if (!slug) throw new Error('Race slug is required.');
+      if (method === 'PUT') {
+        const race = updateRace(slug, await readJsonBody<RaceInput>(req));
+        sendJson(res, 200, { race, races: listRaces() });
+      } else {
+        deleteRace(slug);
+        sendJson(res, 200, { ok: true, races: listRaces() });
+      }
+    } catch (err) {
+      sendJson(res, 400, { error: (err as Error).message });
     }
     return;
   }
