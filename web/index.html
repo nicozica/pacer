@@ -18,7 +18,7 @@
   <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png?v=7">
   <link rel="shortcut icon" href="/favicon.ico?v=7">
   <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png?v=7">
-  <link rel="stylesheet" href="style.css?v=20260828a">
+  <link rel="stylesheet" href="style.css?v=20260828b">
 </head>
 <body>
 
@@ -27,7 +27,7 @@
     <h1>Pacer</h1>
     <div class="meta">
       <span id="last-updated">Loading…</span>
-      <button id="btn-refresh">↺ Refresh training & publish</button>
+      <a class="meta-link" href="/races/">Race calendar</a>
     </div>
   </div>
 </header>
@@ -51,44 +51,9 @@
       </div>
     </div>
     <div id="week-summary" class="week-summary">—</div>
-  </section>
-
-  <section id="race-calendar-section">
-    <div class="section-heading-row">
-      <div>
-        <h2>Race calendar</h2>
-        <p class="section-help">Upcoming races used by run.nico.ar. Saving updates its calendar; publish when you are ready to update the public site.</p>
-      </div>
-      <button id="btn-race-publish" class="button-primary">Update run.nico.ar</button>
+    <div class="actions summary-actions">
+      <button id="btn-refresh" class="button-quiet">↺ Refresh training &amp; publish</button>
     </div>
-    <div id="race-status" class="notice hidden" role="status" aria-live="polite"></div>
-    <div id="race-list" class="race-list" aria-live="polite">Loading calendar…</div>
-    <form id="race-form" class="race-form">
-      <h3 id="race-form-heading">Add race</h3>
-      <div class="form-grid">
-        <label>Title
-          <input type="text" id="race-title" required placeholder="Maratón de Buenos Aires">
-        </label>
-        <label>Date
-          <input type="date" id="race-date" required>
-        </label>
-        <label>Distance (km)
-          <input type="number" id="race-distance" min="0.1" step="0.001" required placeholder="42.195">
-        </label>
-        <label>Priority
-          <select id="race-priority">
-            <option value="A">A</option>
-            <option value="B" selected>B</option>
-            <option value="C">C</option>
-          </select>
-        </label>
-      </div>
-      <p id="race-slug-help" class="field-help">A stable slug is generated from the title and date when the race is created.</p>
-      <div class="actions race-form-actions">
-        <button id="btn-race-save" type="submit" class="button-primary">Save race</button>
-        <button id="btn-race-cancel" type="button" class="button-quiet hidden">Cancel edit</button>
-      </div>
-    </form>
   </section>
 
   <section id="editor-section">
@@ -195,6 +160,6 @@
   </a>
 </footer>
 
-<script src="app.js?v=20260828a"></script>
+<script src="app.js?v=20260828b"></script>
 </body>
 </html>

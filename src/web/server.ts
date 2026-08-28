@@ -268,11 +268,14 @@ const server = http.createServer(async (req, res) => {
 
   // Static file serving — resolve against WEB_DIR, prevent path traversal
   const rel = url === '/' ? 'index.html' : url.replace(/^\//, '');
-  const filePath = path.resolve(WEB_DIR, rel);
-  if (!filePath.startsWith(WEB_DIR)) {
+  const requestedPath = path.resolve(WEB_DIR, rel);
+  if (!requestedPath.startsWith(WEB_DIR)) {
     sendText(res, 403, 'Forbidden');
     return;
   }
+  const filePath = fs.existsSync(requestedPath) && fs.statSync(requestedPath).isDirectory()
+    ? path.join(requestedPath, 'index.html')
+    : requestedPath;
   serveFile(res, filePath);
 });
 
