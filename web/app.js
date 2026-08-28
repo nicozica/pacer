@@ -656,7 +656,7 @@ async function refreshTrainingData(options = {}) {
   const selectedSourceActivityId = currentEditorSession?.selectedSourceActivityId ?? null;
   const previousLastUpdated = document.getElementById('last-updated').textContent;
 
-  if (updateButton) {
+  if (updateButton && btn) {
     btn.disabled = true;
     btn.textContent = '↺ Refreshing…';
   }
@@ -678,7 +678,7 @@ async function refreshTrainingData(options = {}) {
     }
     throw err;
   } finally {
-    if (updateButton) {
+    if (updateButton && btn) {
       btn.disabled = false;
       btn.textContent = '↺ Refresh training & publish';
     }
@@ -690,8 +690,10 @@ async function refreshAndPublish() {
   const selectedSourceActivityId = currentEditorSession?.selectedSourceActivityId ?? null;
   const previousLastUpdated = document.getElementById('last-updated').textContent;
 
-  btn.disabled = true;
-  btn.textContent = '↺ Publishing…';
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = '↺ Publishing…';
+  }
   hideError();
   hideNotice();
   setLastUpdatedMessage('Refreshing training data and publishing…');
@@ -725,8 +727,10 @@ async function refreshAndPublish() {
     showError(err.message || 'Refresh and publish failed.');
     throw err;
   } finally {
-    btn.disabled = false;
-    btn.textContent = '↺ Refresh training & publish';
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = '↺ Refresh training & publish';
+    }
   }
 }
 
@@ -1208,14 +1212,6 @@ async function copyText(text) {
 /* ------------------------------------------------------------------ */
 /* Event wiring                                                       */
 /* ------------------------------------------------------------------ */
-
-document.getElementById('btn-refresh').addEventListener('click', async () => {
-  try {
-    await refreshAndPublish();
-  } catch {
-    // Error feedback is already handled in refreshAndPublish.
-  }
-});
 
 document.getElementById('source-activity').addEventListener('change', async (event) => {
   const sourceActivityId = Number(event.target.value);

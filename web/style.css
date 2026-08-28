@@ -547,10 +547,6 @@ button:disabled {
   border-color: rgba(245, 80, 0, 0.65);
 }
 
-.summary-actions {
-  margin-top: 0.65rem;
-}
-
 /* ---- Error ---- */
 
 .error {
