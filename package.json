@@ -24,7 +24,9 @@
     "test:brief-segments": "ts-node --transpile-only src/training/brief-segments-regression-cli.ts",
     "test:coachat-unified": "ts-node --transpile-only src/coachat/unified-regression-cli.ts",
     "auth:garmin": "ts-node --transpile-only src/auth/login.ts garmin",
-    "capture": "ts-node --transpile-only src/capture/runner.ts"
+    "capture": "ts-node --transpile-only src/capture/runner.ts",
+    "test:publish-attempts": "ts-node --transpile-only src/session/publish-attempt-regression-cli.ts",
+    "test:review-publish-ui": "ts-node --transpile-only src/web/review-publish-ui-regression-cli.ts"
   },
   "dependencies": {
     "better-sqlite3": "^12.8.0",

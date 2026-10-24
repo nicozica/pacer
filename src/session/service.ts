@@ -27,6 +27,8 @@ import {
   listStoredFutureWorkouts,
   listStoredSessionSummaries,
   markSessionPublished,
+  recordSessionPublishAttempt,
+  getLatestSessionPublishAttempt,
   reassignSessionSourceActivityId,
   saveStoredSession,
   upsertWeeklySnapshot,
@@ -477,6 +479,14 @@ function defaultTcxFilename(activity: SourceActivity, sourceActivityId: number):
   return `pacer-${sessionDate}-${sourceActivityId}.tcx`;
 }
 
+function describePublication(stored: StoredSession | null): EditorSession['publication'] {
+  const publishedAt = stored?.core.publishedAt ?? null;
+  if (!stored || !publishedAt) return { state: 'draft', publishedAt: null, attemptedAt: null, message: null };
+  const attempt = getLatestSessionPublishAttempt(stored.core.id);
+  if (attempt && !attempt.ok) return { state: 'failed', publishedAt, attemptedAt: attempt.attemptedAt, message: attempt.message };
+  return { state: 'published', publishedAt, attemptedAt: attempt?.attemptedAt ?? null, message: attempt?.message ?? null };
+}
+
 async function buildEditorSession(bundle: ActivityBundle, sourceActivityId: number): Promise<EditorSession> {
   const resolvedSource = await resolveSourceActivity(bundle, sourceActivityId);
   const activity = resolvedSource.activity;
@@ -498,6 +508,7 @@ async function buildEditorSession(bundle: ActivityBundle, sourceActivityId: numb
 
   return {
     selectedSourceActivityId: sourceActivityId,
+    publication: describePublication(stored),
     savedSessionId: stored?.core.id ?? null,
     source: buildSourceSummary(bundle, activity, stored),
     manual: stored?.manual
@@ -1317,6 +1328,7 @@ export async function saveSession(input: SaveSessionInput, options: SaveSessionO
   const publishStatus = options.publish ? await deployRunSite() : null;
 
   if (publishStatus) {
+    recordSessionPublishAttempt(session.core.id, publishStatus.ok, publishStatus.message);
     if (publishStatus.ok) {
       console.info('[Pacer service] Publish hook succeeded', {
         sessionId: session.core.id,

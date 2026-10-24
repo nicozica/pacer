@@ -449,6 +449,33 @@ function migrate(db: SqliteDatabase): void {
       db.pragma('foreign_keys = ON');
     }
   }
+  if (currentVersion < 9) {
+    // Additive: records the real outcome of each publish so "Published" is not inferred from published_at,
+    // which is stamped before the deploy runs.
+    db.transaction(() => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS session_publish_attempts (
+          id INTEGER PRIMARY KEY AUTOINCREMENT, session_id INTEGER NOT NULL,
+          ok INTEGER NOT NULL, message TEXT NOT NULL, attempted_at TEXT NOT NULL,
+          FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_session_publish_attempts_session ON session_publish_attempts(session_id, id DESC);`);
+      db.pragma('user_version = 9');
+    })();
+  }
+}
+
+export interface StoredSessionPublishAttempt { ok: boolean; message: string; attemptedAt: string; }
+
+export function recordSessionPublishAttempt(sessionId: number, ok: boolean, message: string): void {
+  getDatabase().prepare('INSERT INTO session_publish_attempts (session_id, ok, message, attempted_at) VALUES (?, ?, ?, ?)')
+    .run(sessionId, ok ? 1 : 0, message.slice(0, 500), new Date().toISOString());
+}
+
+export function getLatestSessionPublishAttempt(sessionId: number): StoredSessionPublishAttempt | null {
+  const row = getDatabase().prepare('SELECT ok, message, attempted_at FROM session_publish_attempts WHERE session_id = ? ORDER BY id DESC LIMIT 1')
+    .get(sessionId) as { ok: number; message: string; attempted_at: string } | undefined;
+  return row ? { ok: row.ok === 1, message: row.message, attemptedAt: row.attempted_at } : null;
 }
 
 function toNullableText(value: unknown): string | null {
