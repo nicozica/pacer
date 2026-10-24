@@ -20,6 +20,8 @@
     "training:fetch": "ts-node --transpile-only src/training/fetch-cli.ts",
     "training:fetch:prod": "node dist/training/fetch-cli.js",
     "intervals:smoke": "ts-node --transpile-only src/training/intervals-smoke-cli.ts",
+    "test:garmin-wellness": "ts-node --transpile-only src/training/garmin-wellness-regression-cli.ts",
+    "test:brief-segments": "ts-node --transpile-only src/training/brief-segments-regression-cli.ts",
     "test:coachat-unified": "ts-node --transpile-only src/coachat/unified-regression-cli.ts",
     "auth:garmin": "ts-node --transpile-only src/auth/login.ts garmin",
     "capture": "ts-node --transpile-only src/capture/runner.ts"

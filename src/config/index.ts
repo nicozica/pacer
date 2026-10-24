@@ -16,6 +16,10 @@ function parseIntWithFallback(input: string | undefined, fallback: number): numb
   return Number.isNaN(n) ? fallback : n;
 }
 
+function parseBoolean(input: string | undefined): boolean {
+  return input?.trim().toLowerCase() === 'true';
+}
+
 function resolveRunSiteRacesFile(): string | null {
   const explicitFile = process.env.RUN_SITE_RACES_FILE?.trim();
   if (explicitFile) {
@@ -51,6 +55,18 @@ export const config = {
   intervalsApiBaseUrl: process.env.INTERVALS_API_BASE_URL ?? 'https://intervals.icu/api/v1',
   intervalsAthleteId: process.env.INTERVALS_ATHLETE_ID ?? '0',
   intervalsFetchDays: parseIntWithFallback(process.env.INTERVALS_FETCH_DAYS, 180),
+
+  // Optional Garmin Personal API wellness overlay. It is deliberately disabled
+  // unless explicitly enabled, and credentials remain outside this repository.
+  garminWellnessEnabled: parseBoolean(process.env.GARMIN_WELLNESS_ENABLED),
+  garminPersonalApiBaseUrl: process.env.GARMIN_PERSONAL_API_BASE_URL ?? 'https://personal.connectapi.garmin.com',
+  garminPersonalApiKeyFile: process.env.GARMIN_PERSONAL_API_KEY_FILE ?? '/srv/repos/.garmin-personal-api-poc/credentials/api-key',
+  // Deliberately separate from the Python POC's bearer-token cache.
+  garminPersonalBearerTokenCacheFile: process.env.GARMIN_PERSONAL_BEARER_TOKEN_CACHE_FILE ?? '/srv/repos/.garmin-personal-api-poc/credentials/pacer-bearer-token.json',
+  garminWellnessTimeoutMs: parseIntWithFallback(process.env.GARMIN_WELLNESS_TIMEOUT_MS, 8_000),
+  garminWellnessTotalTimeoutMs: parseIntWithFallback(process.env.GARMIN_WELLNESS_TOTAL_TIMEOUT_MS, 15_000),
+  garminWellnessTimeZone: process.env.GARMIN_WELLNESS_TIME_ZONE ?? 'America/Argentina/Buenos_Aires',
+  garminPersonalApiKeyExpiresOn: process.env.GARMIN_PERSONAL_API_KEY_EXPIRES_ON ?? '2027-10-24',
 
   // Web server settings
   webHost: process.env.WEB_HOST ?? '127.0.0.1',

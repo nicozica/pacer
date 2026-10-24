@@ -2,6 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { config } from '../config';
 import { isWellnessCacheFresh, shouldCacheGarminDeviceLaps } from '../training/cache-freshness';
+import { getGarminWellnessContext, type GarminWellnessContext } from '../training/garmin-wellness';
 import { buildIntervalsWellnessContext } from '../training/wellness';
 import { ensureDir } from '../utils/storage';
 import { createTrainingSource, getTrainingSourceForBundle } from '../training/source';
@@ -124,6 +125,8 @@ export interface SourceWellnessContext {
     averageSleepScore: number | null;
     averageRestingHeartRate: number | null;
   };
+  /** Present only when the explicitly enabled Garmin overlay was evaluated. */
+  garmin?: GarminWellnessContext;
 }
 
 export interface SourceStreamPayload {
@@ -384,7 +387,11 @@ async function fetchWellnessContext(
   sessionDate: string,
 ): Promise<SourceWellnessContext | null> {
   const cached = readCachedWellnessContext(sourceActivityId);
-  if (cached?.sessionDate === sessionDate && isWellnessCacheFresh(sessionDate, cached.fetchedAt)) return cached;
+  const attachGarmin = async (intervals: SourceWellnessContext): Promise<SourceWellnessContext> => {
+    if (!config.garminWellnessEnabled) return intervals;
+    return { ...intervals, garmin: await getGarminWellnessContext({ sessionDate, storageDir: config.storageDir }) };
+  };
+  if (cached?.sessionDate === sessionDate && isWellnessCacheFresh(sessionDate, cached.fetchedAt)) return attachGarmin(cached);
 
   const source = createTrainingSource(getTrainingSourceForBundle(bundle.source));
   if (!source.fetchWellness) return null;
@@ -395,10 +402,10 @@ async function fetchWellnessContext(
       newest: sessionDate,
     }));
     writeCachedWellnessContext(sourceActivityId, context);
-    return context;
+    return attachGarmin(context);
   } catch {
     // A temporary API failure must not erase a previously useful local record.
-    return cached?.sessionDate === sessionDate ? cached : null;
+    return cached?.sessionDate === sessionDate ? attachGarmin(cached) : null;
   }
 }
 
