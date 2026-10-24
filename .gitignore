@@ -12,3 +12,6 @@ storage/auth/*
 storage/logs/*
 storage/locks/*
 !storage/**/.gitkeep
+
+# Deployment artifacts and local rollback data
+.deploy/
