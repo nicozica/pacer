@@ -29,12 +29,18 @@ function intensity(step: FutureWorkoutStep): string {
   return step.kind === 'work' ? 'active' : step.kind;
 }
 
+function athleteFacingText(step: FutureWorkoutStep): string {
+  if (!step.cue) return step.label ?? '';
+  return step.label ? `${step.label}: ${step.cue}` : step.cue;
+}
+
 function stepText(step: FutureWorkoutStep): string {
   const target = step.target.kind === 'pace'
     ? ` ${pace(step.target.minSecPerKm)}${step.target.minSecPerKm === step.target.maxSecPerKm ? '' : `-${pace(step.target.maxSecPerKm)}`}/km Pace`
     : '';
+  // Intervals parses free text before the duration as the device cue/label.
   // Its explicit intensity flag is preserved in FIT exports (and avoids target-based guessing).
-  const text = step.label ?? '';
+  const text = athleteFacingText(step);
   return `- ${text ? `${text} ` : ''}${duration(step)}${target} intensity=${intensity(step)}`;
 }
 

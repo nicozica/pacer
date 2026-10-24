@@ -45,6 +45,8 @@ export type FutureWorkoutEffort = UnrestrictedEffort | PaceEffort;
 export interface FutureWorkoutStep {
   kind: WorkoutStepKind;
   label?: string;
+  /** Optional concise, athlete-facing instruction appended after the label in device text. */
+  cue?: string;
   duration: FutureWorkoutStepDuration;
   target: FutureWorkoutEffort;
 }

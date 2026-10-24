@@ -24,7 +24,7 @@ function blockLines(block: FutureWorkoutBlock, indent = ''): string[] {
     const heading = `${indent}Repeat ${block.repetitions}×${block.label ? ` — ${block.label}` : ''}`;
     return [heading, ...block.steps.flatMap((step) => blockLines(step, `${indent}  `))];
   }
-  return [`${indent}${block.kind}: ${durationText(block.duration)} @ ${effortText(block.target)}${block.label ? ` — ${block.label}` : ''}`];
+  return [`${indent}${block.kind}: ${durationText(block.duration)} @ ${effortText(block.target)}${block.label ? ` — ${block.label}` : ''}${block.cue ? ` · ${block.cue}` : ''}`];
 }
 
 export function formatFutureWorkoutPreview(workout: FutureWorkoutProposal): string[] {

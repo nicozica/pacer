@@ -80,6 +80,18 @@ function optionalText(value: unknown, path: string): string | null {
   return text(value, path, false) || null;
 }
 
+/** Keep cue text safely inside the Intervals structured-text prefix. */
+function optionalStepCue(value: unknown, path: string): string | undefined {
+  if (value === undefined || value === null) return undefined;
+  const cue = text(value, path, false);
+  if (!cue) return undefined;
+  if (cue.length > 120) fail(`${path} must be at most 120 characters.`);
+  if (!/^[A-Za-z0-9][A-Za-z0-9 ,.?'!\-]*$/.test(cue)) {
+    fail(`${path} must be a concise single-line English coaching cue using letters, numbers, spaces, and basic punctuation.`);
+  }
+  return cue;
+}
+
 function timezone(value: unknown): string {
   const zone = text(value, 'schedule.timezone');
   try {
@@ -129,9 +141,11 @@ function parseStep(value: unknown, path: string): FutureWorkoutStep {
   }
 
   const label = raw.label === undefined ? undefined : text(raw.label, `${path}.label`, false);
+  const cue = optionalStepCue(raw.cue, `${path}.cue`);
   return {
     kind: kind as FutureWorkoutStep['kind'],
     ...(label ? { label } : {}),
+    ...(cue ? { cue } : {}),
     duration: parsedDuration,
     target: parsedTarget,
   };
