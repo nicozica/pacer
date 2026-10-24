@@ -155,7 +155,7 @@ export interface EditorBootstrap {
 
 export interface SaveSessionInput {
   sourceActivityId: number;
-  manual: SessionManualInput;
+  manual: Omit<SessionManualInput, 'sleepScore'> & { sleepScore?: number | null };
   files: SessionFilesInput;
   ai: SessionAIInput;
 }

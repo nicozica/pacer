@@ -81,7 +81,6 @@ function normalizeSessionTypeAlias(value) {
 const FORM_INPUT_IDS = [
   'session-type',
   'legs',
-  'sleep-score',
   'restedness',
   'notes',
 ];
@@ -1046,7 +1045,6 @@ function fillEditorForm(options = {}) {
 
   setValue('session-type', session.manual.sessionType);
   setValue('legs', session.manual.legs);
-  setValue('sleep-score', session.manual.sleepScore ?? '');
   setValue('restedness', session.manual.restedness);
   setValue('notes', session.manual.extraNotes);
 
@@ -1134,7 +1132,6 @@ function collectEditorPayload() {
     manual: {
       sessionType: val('session-type'),
       legs: val('legs'),
-      sleepScore: toOptionalNumber(val('sleep-score')),
       restedness: val('restedness'),
       extraNotes: val('notes'),
     },
@@ -1517,7 +1514,7 @@ function buildBriefText() {
   lines.push('--- HOW I FELT ---');
   lines.push(`Session type: ${val('session-type') || '—'}`);
   lines.push(`Legs: ${val('legs') || '—'}`);
-  lines.push(`Sleep: score ${val('sleep-score') ? `${val('sleep-score')}/100` : '—'} | restedness ${val('restedness') || '—'}`);
+  lines.push(`Restedness: ${val('restedness') || '—'}`);
   lines.push(`Extra notes: ${val('notes') || '—'}`);
 
   lines.push('');

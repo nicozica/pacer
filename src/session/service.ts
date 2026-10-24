@@ -875,11 +875,17 @@ function hasAiContent(ai: SessionAIInput): boolean {
   );
 }
 
-function sanitizeManualInput(input: SaveSessionInput['manual']): SessionManualInput {
+function sanitizeManualInput(
+  input: SaveSessionInput['manual'],
+  previousSleepScore: number | null = null,
+): SessionManualInput {
+  const includesSleepScore = Boolean(input) && Object.prototype.hasOwnProperty.call(input, 'sleepScore');
   return {
     sessionType: normalizeSessionTypeAlias(sanitizeText(input?.sessionType)) ?? '',
     legs: sanitizeText(input?.legs),
-    sleepScore: sanitizeOptionalNumber(input?.sleepScore),
+    // Sleep score is now sourced from Garmin (with Intervals fallback). Preserve
+    // historical manual values when a newer UI no longer submits this field.
+    sleepScore: includesSleepScore ? sanitizeOptionalNumber(input?.sleepScore) : previousSleepScore,
     restedness: sanitizeText(input?.restedness),
     extraNotes: sanitizeText(input?.extraNotes),
   };
@@ -1247,7 +1253,7 @@ export async function saveSession(input: SaveSessionInput, options: SaveSessionO
   const existing = matchedSession.session && matchedSession.matchedBy === 'fingerprint'
     ? reassignSessionSourceActivityId(matchedSession.session.core.id, bundle.source, input.sourceActivityId)
     : matchedSession.session;
-  const manual = sanitizeManualInput(input.manual);
+  const manual = sanitizeManualInput(input.manual, existing?.manual.sleepScore ?? null);
   const files = sanitizeFilesInput(input.files);
   const aiMetadata: SessionAIMetadata = {
     modelName: options.aiMetadata?.modelName ?? existing?.ai.modelName ?? null,
