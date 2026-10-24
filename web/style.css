@@ -174,7 +174,7 @@ section > h2 {
   gap: 0.75rem 1.125rem;
 }
 
-.felt-form-grid {
+.form-grid.felt-form-grid {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
@@ -673,7 +673,7 @@ button:disabled {
 /* ---- Responsive ---- */
 
 @media (max-width: 480px) {
-  .felt-form-grid {
+  .form-grid.felt-form-grid {
     grid-template-columns: 1fr;
   }
 
