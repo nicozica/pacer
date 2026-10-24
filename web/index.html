@@ -18,7 +18,7 @@
   <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png?v=7">
   <link rel="shortcut icon" href="/favicon.ico?v=7">
   <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png?v=7">
-  <link rel="stylesheet" href="style.css?v=20261024b">
+  <link rel="stylesheet" href="style.css?v=20261025a">
 </head>
 <body>
 
@@ -134,40 +134,26 @@
     </div>
 
     <div class="coachat-step" id="coachat-review">
-      <h3><span class="step-num">3</span> Review and save</h3>
+      <h3><span class="step-num">3</span> Review &amp; Publish</h3>
       <div class="coachat-preview-grid">
         <div>
-          <h4>Session analysis</h4>
+          <h4>Session analysis <span id="session-status-badge" class="status-badge">Draft</span></h4>
           <div id="ai-preview" class="ai-preview"><p class="empty">Nothing imported.</p></div>
+          <p id="session-status-note" class="field-help"></p>
         </div>
         <div>
-          <h4>Next workout</h4>
+          <h4>Next workout <span id="workout-status-badge" class="status-badge hidden"></span></h4>
           <div id="coachat-workout-preview" class="ai-preview"><p class="empty">Nothing imported.</p></div>
+          <p id="workout-status-note" class="field-help"></p>
         </div>
       </div>
       <div class="actions save-actions">
-        <button id="btn-save-publish" class="button-primary">Publish &amp; schedule</button>
-        <button id="btn-save" class="button-quiet">Save draft</button>
+        <button id="btn-save-publish" class="button-primary">Publish &amp; Sync</button>
+        <button id="btn-save" class="button-quiet">Save Draft</button>
+        <button id="btn-retry-sync" class="button-quiet hidden">Retry Sync</button>
       </div>
-      <dialog id="publish-confirm-dialog" class="confirm-dialog" aria-modal="true" aria-labelledby="publish-confirm-title" aria-describedby="publish-confirm-detail">
-        <form method="dialog" class="confirm-dialog__surface">
-          <h3 id="publish-confirm-title">Publish this session?</h3>
-          <p id="publish-confirm-detail">This publishes the session to run.nico.ar.</p>
-          <ul id="publish-confirm-effects" class="confirm-dialog__effects"></ul>
-          <div class="actions confirm-dialog__actions">
-            <button id="publish-confirm-cancel" class="button-quiet" value="cancel" type="button">Cancel</button>
-            <button id="publish-confirm-submit" class="button-primary" value="confirm" type="button">Publish &amp; schedule</button>
-          </div>
-        </form>
-      </dialog>
       <ul id="coachat-result" class="coachat-result hidden" role="status" aria-live="polite"></ul>
       <div id="save-banner" class="notice hidden" role="status" aria-live="polite"></div>
-    </div>
-
-    <div class="coachat-step" id="coachat-workouts">
-      <h3><span class="step-num">4</span> <span id="workouts-heading">Next workout</span></h3>
-      <div id="future-workout-list" class="future-workout-list" aria-live="polite"><p class="empty">Loading workouts…</p></div>
-      <p id="future-workout-status" class="field-help" role="status" aria-live="polite"></p>
     </div>
   </section>
 
@@ -184,7 +170,7 @@
 <script src="workout-format.js?v=20261022a"></script>
 <script src="editor-state.js?v=20261022a"></script>
 <script src="brief-segments.js?v=20261022a"></script>
-<script src="app.js?v=20261022a"></script>
-<script src="future-workouts.js?v=20261022a"></script>
+<script src="future-workouts.js?v=20261025a"></script>
+<script src="app.js?v=20261025a"></script>
 </body>
 </html>

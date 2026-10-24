@@ -611,23 +611,126 @@ function isCoachatSaveable() {
   return ai.kind === 'legacy';
 }
 
-function actionLabel(mode) {
+// Pacer's "synced" lifecycle only means the event exists on the Intervals.icu calendar. Intervals
+// exposes no supported way to confirm it reached Garmin Connect, so no Garmin success is ever shown.
+const WORKOUT_STATUS_LABEL = {
+  proposed: 'Proposed', syncing: 'Publishing / Syncing', sent: 'Sent to Intervals',
+  failed: 'Sync failed', approved: 'Approved · not sent', superseded: 'Superseded',
+};
+const SESSION_STATUS_LABEL = { draft: 'Draft', publishing: 'Publishing', published: 'Published', failed: 'Failed' };
+
+let activeRun = null; // the run currently executing, for live status
+
+function workoutContentKey(workout) {
+  return canonicalJson(WORKOUT_CONTENT_FIELDS.map((field) => workout[field]));
+}
+
+/** The workout this section acts on: the pasted one, else the stored one for the selected session. */
+function reviewTarget() {
   const ai = currentAiImport;
-  if (coachatRun && ai && coachatRun.key === runKey(ai.rawText) && coachatRun.failed() && coachatRun.mode === mode) return 'Retry failed step';
-  if (mode === 'draft') return 'Save draft';
-  return ai?.kind === 'envelope' ? 'Publish & schedule' : 'Publish';
+  const session = currentEditorSession;
+  const records = window.PacerWorkouts?.records() ?? [];
+  const pasted = ai?.kind === 'envelope' && ai.workoutCheck.state === 'valid' ? ai.workoutCheck.workout : null;
+  let record = null;
+  if (pasted) {
+    const wanted = workoutContentKey(pasted);
+    record = records.find((entry) => workoutContentKey(entry.workout) === wanted) || null;
+  } else if (session && ai?.kind !== 'envelope') {
+    const today = (workout) => window.PacerWorkoutFormat.localToday(workout.schedule?.timezone, new Date());
+    const forSession = records
+      .filter((entry) => entry.workout.sourceSession?.sourceActivityId === session.selectedSourceActivityId
+        && entry.workout.lifecycle?.approvalStatus !== 'rejected'
+        && String(entry.workout.schedule?.localDate || '') >= today(entry.workout))
+      .sort((x, y) => y.workout.proposalRevision - x.workout.proposalRevision);
+    record = forSession.find((entry) => entry.workout.lifecycle?.approvalStatus !== 'superseded') || forSession[0] || null;
+  }
+  const lifecycle = record?.workout.lifecycle;
+  const superseded = lifecycle?.approvalStatus === 'superseded';
+  const workout = pasted || record?.workout || null;
+  let status = 'proposed';
+  if (lifecycle) {
+    if (superseded) status = 'superseded';
+    else if (lifecycle.syncStatus === 'syncing') status = 'syncing';
+    else if (lifecycle.syncStatus === 'synced') status = 'sent';
+    else if (lifecycle.syncStatus === 'failed') status = 'failed';
+    else if (lifecycle.approvalStatus === 'approved') status = 'approved';
+  }
+  if (activeRun && (activeRun.current === 'approve' || activeRun.current === 'sync')) status = 'syncing';
+  const approved = lifecycle?.approvalStatus === 'approved';
+  return {
+    pasted: Boolean(pasted), workout, record, status, superseded,
+    hasWorkout: Boolean(workout) && !(superseded && !pasted),
+    blockPublish: Boolean(pasted) && superseded,
+    error: lifecycle?.lastSyncError || '',
+    canRetrySync: Boolean(record) && approved && !superseded && lifecycle.syncStatus !== 'synced',
+  };
+}
+
+function sessionPublicationState() {
+  const publication = currentEditorSession?.publication;
+  if (activeRun && activeRun.current === 'publish') return { state: 'publishing', message: '' };
+  if (activeRun && activeRun.state.publish === 'failed') return { state: 'failed', message: activeRun.error.publish };
+  return { state: publication?.state || 'draft', message: publication?.message || '', publishedAt: publication?.publishedAt };
+}
+
+function setBadge(el, key, labels) {
+  el.textContent = labels[key];
+  el.className = `status-badge is-${key}`;
+}
+
+function renderReviewStatus() {
+  const session = sessionPublicationState();
+  setBadge(document.getElementById('session-status-badge'), session.state, SESSION_STATUS_LABEL);
+  const sessionNote = document.getElementById('session-status-note');
+  sessionNote.textContent = {
+    draft: 'Not published.',
+    publishing: 'Publishing to run.nico.ar…',
+    published: 'Confirmed available on run.nico.ar.',
+    failed: `Not confirmed on run.nico.ar. ${session.message || ''}`.trim(),
+  }[session.state];
+
+  const target = reviewTarget();
+  const badge = document.getElementById('workout-status-badge');
+  const note = document.getElementById('workout-status-note');
+  if (currentAiImport?.kind !== 'envelope') {
+    const preview = document.getElementById('coachat-workout-preview');
+    preview.innerHTML = target.workout
+      ? window.PacerWorkoutFormat.renderWorkout(target.workout)
+      : `<p class="empty">${window.PacerWorkouts?.isLoaded() ? 'No upcoming workout.' : 'Loading workout…'}</p>`;
+  }
+  badge.classList.toggle('hidden', !target.workout);
+  if (!target.workout) { note.textContent = ''; return; }
+  setBadge(badge, target.status, WORKOUT_STATUS_LABEL);
+  note.textContent = {
+    proposed: 'Publish & Sync approves this workout and sends it to Intervals.icu.',
+    syncing: 'Sending to Intervals.icu…',
+    sent: 'On your Intervals.icu calendar. Intervals forwards it to Garmin Connect; arrival there can’t be verified from Pacer.',
+    failed: `Not on your calendar. ${target.error} Use Retry Sync.`,
+    approved: 'Approved but not on your calendar yet. Use Retry Sync.',
+    superseded: 'Replaced by a newer revision. It won’t be sent.',
+  }[target.status];
+}
+
+function actionLabel(mode) {
+  if (mode === 'draft') return 'Save Draft';
+  return reviewTarget().hasWorkout ? 'Publish & Sync' : 'Publish';
 }
 
 function applyActionState() {
   document.getElementById('btn-copy').disabled = uiBusy;
   document.getElementById('btn-download').disabled = uiBusy;
   const blocked = uiBusy || saveInFlight || !currentEditorSession || !isCoachatSaveable();
+  const target = reviewTarget();
   document.getElementById('btn-save').disabled = blocked;
-  document.getElementById('btn-save-publish').disabled = blocked;
+  document.getElementById('btn-save-publish').disabled = blocked || target.blockPublish;
+  const retry = document.getElementById('btn-retry-sync');
+  retry.classList.toggle('hidden', !target.canRetrySync);
+  retry.disabled = uiBusy || saveInFlight;
   if (!saveInFlight) {
     document.getElementById('btn-save').textContent = actionLabel('draft');
     document.getElementById('btn-save-publish').textContent = actionLabel('publish');
   }
+  renderReviewStatus();
 }
 
 async function fetchJson(url, options = {}) {
@@ -1071,8 +1174,7 @@ function renderEditorState(options = {}) {
     setButtonsDisabled(true);
   }
   updateBrief();
-  // Lets the workout list tell completed workouts from upcoming ones.
-  window.PacerWorkouts?.setRuns(currentEditorBootstrap?.recentRuns ?? []);
+  renderReviewStatus();
 }
 
 async function reloadEditorState(sourceActivityId = null) {
@@ -1149,7 +1251,7 @@ function runKey(rawText) {
   return `${currentEditorSession?.selectedSourceActivityId ?? ''}\n${rawText}`;
 }
 
-const PIPELINE_STEPS = ['session', 'workout', 'approve', 'sync', 'publish'];
+const PIPELINE_STEPS = ['session', 'workout', 'publish', 'approve', 'sync'];
 
 function newCoachatRun(rawText, mode) {
   return {
@@ -1177,27 +1279,29 @@ function renderCoachatResult(run) {
 
   if (planned('session')) {
     const st = mark('session');
-    add('Session', st, st === 'ok' ? 'Saved locally.' : st === 'failed' ? `Not saved: ${run.error.session}` : st === 'pending' ? 'Saving…' : 'Not started.');
+    add('Session', st, st === 'ok' ? 'Saved.' : st === 'failed' ? `Not saved: ${run.error.session}` : st === 'pending' ? 'Saving…' : 'Not started.');
   }
   if (planned('workout')) {
     const st = mark('workout');
     add('Next workout', st, st === 'ok' ? (WORKOUT_OPERATION_TEXT[run.operation] || 'Stored.')
       : st === 'failed' ? `Not stored: ${run.error.workout}`
-      : st === 'pending' ? 'Importing…'
-      : run.state.session === 'failed' ? 'Not imported because the session was not saved.' : 'Not started.');
-  }
-  if (planned('approve') || planned('sync')) {
-    let cls; let text;
-    if (run.state.sync === 'ok') { cls = 'ok'; text = 'Approved and synced to Intervals.icu.'; }
-    else if (run.state.sync === 'failed') { cls = 'failed'; text = `Approved, but not synced: ${run.error.sync} It is not on your calendar.`; }
-    else if (run.state.approve === 'failed') { cls = 'failed'; text = `Not approved: ${run.error.approve}`; }
-    else if (run.current === 'approve' || run.current === 'sync') { cls = 'pending'; text = run.current === 'approve' ? 'Approving…' : 'Syncing…'; }
-    else { cls = 'skipped'; text = run.state.approve === 'ok' ? 'Approved. Sync not started.' : 'Not started.'; }
-    add('Intervals.icu', cls, text);
+      : st === 'pending' ? 'Importing…' : 'Not started.');
   }
   if (planned('publish')) {
     const st = mark('publish');
-    add('run.nico.ar', st, st === 'ok' ? 'Published.' : st === 'failed' ? `Not published: ${run.error.publish}` : st === 'pending' ? 'Publishing…' : 'Not started.');
+    add('run.nico.ar', st, st === 'ok' ? (run.publishSkipped ? 'Already published; nothing changed.' : 'Published.')
+      : st === 'failed' ? `Not published: ${run.error.publish}`
+      : st === 'pending' ? 'Publishing…'
+      : run.state.workout === 'failed' ? 'Not started because the workout was not stored.' : 'Not started.');
+  }
+  if (planned('approve') || planned('sync')) {
+    let cls; let text;
+    if (run.state.sync === 'ok') { cls = 'ok'; text = 'Sent to Intervals.icu. Garmin Connect delivery isn’t verifiable from Pacer.'; }
+    else if (run.state.sync === 'failed') { cls = 'failed'; text = `Approved, but sync failed: ${run.error.sync} Use Retry Sync.`; }
+    else if (run.state.approve === 'failed') { cls = 'failed'; text = `Not approved: ${run.error.approve}`; }
+    else if (run.current === 'approve' || run.current === 'sync') { cls = 'pending'; text = run.current === 'approve' ? 'Approving…' : 'Sending to Intervals.icu…'; }
+    else { cls = 'skipped'; text = run.state.approve === 'ok' ? 'Approved. Not sent yet.' : 'Not started.'; }
+    add('Intervals.icu', cls, text);
   }
   list.innerHTML = rows.join('');
   list.classList.remove('hidden');
@@ -1269,57 +1373,68 @@ const STEP_RUNNERS = {
     run.eventId = lifecycle.intervalsEventId || '';
   },
   async publish(run, ctx) {
+    // Never redeploy an unchanged, already-confirmed publication (retries, refreshes, repeated clicks).
+    if (ctx.skipPublish) { run.publishSkipped = true; return; }
     const response = await persistSession(run, ctx.payload, true);
     run.publishInfo = response.publishStatus || null;
     if (response.publishStatus && !response.publishStatus.ok) throw new Error(describePublishFailure(response.publishStatus));
   },
 };
 
-function plannedSteps(mode, envelope) {
-  if (mode === 'draft') return envelope ? ['session', 'workout'] : ['session'];
-  return envelope ? PIPELINE_STEPS : ['publish'];
+// Draft: save + store the proposal. Publish: store the proposal, publish (which saves the reviewed
+// analysis), then approve and sync. The primary button is the user's explicit approval of the workout.
+function plannedSteps(mode, target) {
+  if (mode === 'draft') return target.pasted ? ['session', 'workout'] : ['session'];
+  const steps = [];
+  if (target.pasted) steps.push('workout');
+  steps.push('publish');
+  if (target.hasWorkout) steps.push('approve', 'sync');
+  return steps;
 }
 
-let publishConfirmOpen = false;
-function confirmPublishSchedule(envelope) {
-  const dialog = document.getElementById('publish-confirm-dialog');
-  const detail = document.getElementById('publish-confirm-detail');
-  const effects = document.getElementById('publish-confirm-effects');
-  const cancel = document.getElementById('publish-confirm-cancel');
-  const submit = document.getElementById('publish-confirm-submit');
-  if (!dialog || publishConfirmOpen) return Promise.resolve(false);
-  publishConfirmOpen = true;
-  const previousFocus = document.activeElement;
-  detail.textContent = envelope
-    ? 'This will make the session public and schedule the reviewed next workout.'
-    : 'This will make the session public on run.nico.ar.';
-  effects.innerHTML = envelope
-    ? '<li>Publish this session to run.nico.ar.</li><li>Approve and synchronize the next workout with Intervals.icu.</li>'
-    : '<li>Publish this session to run.nico.ar.</li>';
-  submit.textContent = envelope ? 'Publish & schedule' : 'Publish';
-  return new Promise((resolve) => {
-    let settled = false;
-    const finish = (approved) => {
-      if (settled) return; settled = true; publishConfirmOpen = false;
-      dialog.removeEventListener('cancel', onCancel); cancel.removeEventListener('click', onCancel); submit.removeEventListener('click', onSubmit);
-      if (dialog.open) dialog.close();
-      if (previousFocus instanceof HTMLElement) previousFocus.focus();
-      resolve(approved);
-    };
-    const onCancel = (event) => { event.preventDefault(); finish(false); };
-    const onSubmit = () => finish(true);
-    dialog.addEventListener('cancel', onCancel); cancel.addEventListener('click', onCancel); submit.addEventListener('click', onSubmit);
-    dialog.showModal();
-    cancel.focus();
-  });
+/** True when the editor content equals what is already published, so a retry or repeat click need not redeploy. */
+function sessionUnchanged(payload) {
+  const session = currentEditorSession;
+  if (session?.publication?.state !== 'published') return false;
+  const strip = (value) => {
+    if (Array.isArray(value)) return value.map(strip);
+    if (value && typeof value === 'object') {
+      return Object.fromEntries(Object.entries(value).filter(([, v]) => v !== null && v !== undefined && v !== '').map(([k, v]) => [k, strip(v)]));
+    }
+    return value;
+  };
+  const pick = (value) => canonicalJson(strip({
+    manual: value.manual,
+    files: { tcxFilename: value.files?.tcxFilename, tcxAttached: value.files?.tcxAttached },
+    ai: value.ai,
+  }));
+  return pick(payload) === pick(session);
+}
+
+function summariseRun(run, mode, envelopeOrWorkout) {
+  const failedStep = run.planned.find((step) => run.state[step] === 'failed');
+  if (failedStep) {
+    const done = run.planned.filter((step) => run.state[step] === 'ok');
+    const names = { session: 'session saved', workout: 'workout stored', approve: 'workout approved', sync: 'sent to Intervals.icu', publish: run.publishSkipped ? 'already published' : 'published' };
+    const failedNames = { session: 'saving the session', workout: 'storing the workout', approve: 'approving the workout', sync: 'sending to Intervals.icu', publish: 'publishing' };
+    const again = failedStep === 'sync' || failedStep === 'approve' ? 'Use Retry Sync; the session is not republished.' : 'Click again to resume; completed steps are not repeated.';
+    showError(`Stopped at ${failedNames[failedStep]}. ${done.length ? `Done: ${done.map((step) => names[step]).join(', ')}. ` : 'Nothing was changed. '}${again}`);
+  } else if (mode === 'publish') {
+    const status = run.publishInfo;
+    const visibleAt = status ? `${(status.publicUrl || 'https://run.nico.ar').replace(/\/$/, '')}${status.expectedSessionPath || '/'}` : '';
+    const published = run.publishSkipped ? 'Session already published.' : `Published to run.nico.ar.${visibleAt ? ` Visible at ${visibleAt}.` : ''}`;
+    showNotice(envelopeOrWorkout ? `${published} Workout sent to Intervals.icu.` : published);
+  } else {
+    showNotice(envelopeOrWorkout
+      ? 'Draft saved: session saved and workout stored. Nothing was published, approved or sent.'
+      : 'Draft saved. Nothing was published.');
+  }
 }
 
 async function saveCurrentSession(mode) {
   if (saveInFlight) return;
   hideError();
   hideNotice();
-
-  if (mode === 'publish' && !await confirmPublishSchedule(currentAiImport?.kind === 'envelope')) return;
 
   const rawText = document.getElementById('ai-json-input').value;
   saveInFlight = true;
@@ -1338,27 +1453,31 @@ async function saveCurrentSession(mode) {
     const payload = collectEditorPayload();
     const envelope = ai.kind === 'envelope';
     keepText = envelope;
+    await window.PacerWorkouts?.reload();
+    const target = reviewTarget();
 
-    // 2. Resume a run with a failed step; a draft may be upgraded to publish without redoing its steps.
-    // Anything else starts fresh (every write is idempotent, so a repeat is safe).
+    // 2. Resume a run with a failed step; anything else starts fresh (every write is idempotent).
     const resume = coachatRun && coachatRun.key === runKey(rawText)
       && (coachatRun.failed() || (coachatRun.mode === 'draft' && mode === 'publish'));
     if (!resume) coachatRun = newCoachatRun(rawText, mode);
     const run = coachatRun;
     run.mode = mode;
-    run.planned = plannedSteps(mode, envelope);
+    run.planned = plannedSteps(mode, target);
     for (const step of run.planned) if (run.state[step] === 'failed') { run.state[step] = 'idle'; run.error[step] = ''; }
-    if (mode === 'publish') { run.state.publish = 'idle'; }
+    run.state.publish = 'idle';
+    run.publishSkipped = false;
+    if (!run.workoutId && target.record) run.workoutId = target.record.workout.pacerWorkoutId;
+    activeRun = run;
     renderCoachatResult(run);
 
     // 3. Run the steps in order and stop at the first failure. Completed steps are never rolled back,
     // and nothing after a failed step is attempted.
-    const ctx = { payload, ai };
+    const ctx = { payload, ai, skipPublish: sessionUnchanged(payload) };
     for (const step of run.planned) {
       if (run.state[step] === 'ok' && step !== 'publish') continue;
-      if (step === 'publish' && run.state.publish === 'ok') continue;
       run.current = step;
       renderCoachatResult(run);
+      renderReviewStatus();
       try {
         await STEP_RUNNERS[step](run, ctx);
         run.state[step] = 'ok';
@@ -1371,33 +1490,56 @@ async function saveCurrentSession(mode) {
     }
     run.current = '';
     renderCoachatResult(run);
-    if (envelope) await window.PacerWorkouts?.reload(run.workoutId || null);
-    if (run.state.session === 'ok' || (!envelope && run.state.publish === 'ok')) renderEditorState({ keepCoachatText: keepText });
-
-    // 4. Summarise honestly.
-    const failedStep = run.planned.find((step) => run.state[step] === 'failed');
-    if (failedStep) {
-      const done = run.planned.filter((step) => run.state[step] === 'ok');
-      const names = { session: 'session saved', workout: 'workout stored', approve: 'workout approved', sync: 'synced to Intervals.icu', publish: 'published' };
-      const failedNames = { session: 'saving the session', workout: 'storing the workout', approve: 'approving the workout', sync: 'syncing to Intervals.icu', publish: 'publishing' };
-      showError(`Stopped at ${failedNames[failedStep]}. ${done.length ? `Done: ${done.map((step) => names[step]).join(', ')}. ` : 'Nothing was saved. '}Your pasted JSON was kept. Use "Retry failed step".`);
-      if (!envelope) syncAiImport(rawText);
-    } else if (mode === 'publish') {
-      const status = run.publishInfo;
-      const visibleAt = status ? `${(status.publicUrl || 'https://run.nico.ar').replace(/\/$/, '')}${status.expectedSessionPath || '/'}` : '';
-      showNotice(envelope
-        ? `Published to run.nico.ar and scheduled in Intervals.icu.${visibleAt ? ` Visible at ${visibleAt}` : ''}`
-        : `Published to run.nico.ar.${visibleAt ? ` Visible at ${visibleAt}` : ''}`);
-    } else {
-      showNotice(envelope
-        ? 'Draft saved: session saved and workout stored. Nothing was published, approved or synced.'
-        : 'Draft saved. Nothing was published.');
-    }
+    await window.PacerWorkouts?.reload();
+    // persistSession stored the server's bootstrap (including the recorded publication outcome).
+    if (run.state.session === 'ok') renderEditorState({ keepCoachatText: keepText });
+    summariseRun(run, mode, target.hasWorkout);
+    if (!envelope && run.failed()) syncAiImport(rawText);
   } catch (err) {
     console.error('[Pacer UI] save aborted before writes', err);
     hideNotice();
     showError(err.message || 'Could not save session.');
   } finally {
+    activeRun = null;
+    saveInFlight = false;
+    setButtonsDisabled(false);
+  }
+}
+
+/** Approve (idempotent) and send an already-stored workout. Never saves or publishes the session. */
+async function retrySync() {
+  if (saveInFlight) return;
+  const target = reviewTarget();
+  if (!target.canRetrySync) return;
+  hideError();
+  hideNotice();
+  saveInFlight = true;
+  setButtonsDisabled(true);
+  const run = newCoachatRun('', 'sync');
+  run.planned = ['approve', 'sync'];
+  run.workoutId = target.record.workout.pacerWorkoutId;
+  activeRun = run;
+  try {
+    for (const step of run.planned) {
+      run.current = step;
+      renderCoachatResult(run);
+      renderReviewStatus();
+      try {
+        await STEP_RUNNERS[step](run, {});
+        run.state[step] = 'ok';
+      } catch (err) {
+        run.state[step] = 'failed';
+        run.error[step] = err.message || 'Unknown error.';
+        break;
+      }
+    }
+    run.current = '';
+    renderCoachatResult(run);
+    await window.PacerWorkouts?.reload();
+    if (run.failed()) showError(`Sync failed: ${run.error.sync || run.error.approve} The session publication was not changed.`);
+    else showNotice('Workout sent to Intervals.icu. The session was not republished.');
+  } finally {
+    activeRun = null;
     saveInFlight = false;
     setButtonsDisabled(false);
   }
@@ -1610,6 +1752,9 @@ document.getElementById('btn-save').addEventListener('click', async () => {
 document.getElementById('btn-save-publish').addEventListener('click', async () => {
   await saveCurrentSession('publish');
 });
+
+document.getElementById('btn-retry-sync').addEventListener('click', retrySync);
+window.PacerWorkouts?.onChange(applyActionState);
 
 document.getElementById('ai-json-input').addEventListener('input', () => {
   const text = document.getElementById('ai-json-input').value;

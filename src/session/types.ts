@@ -132,8 +132,17 @@ export interface SessionSourceSummary {
   city: string | null;
 }
 
+/** `published` means the last deploy was verified on the public site (or predates attempt tracking). */
+export interface SessionPublication {
+  state: 'draft' | 'published' | 'failed';
+  publishedAt: string | null;
+  attemptedAt: string | null;
+  message: string | null;
+}
+
 export interface EditorSession {
   selectedSourceActivityId: number;
+  publication: SessionPublication;
   savedSessionId: number | null;
   source: SessionSourceSummary;
   manual: SessionManualInput;
