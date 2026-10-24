@@ -72,6 +72,8 @@ function storedSessionWithLaps(laps: ReturnType<typeof buildNormalizedLaps>['lap
       briefFilename: '',
     },
     ai: {
+      sourceActivityId: 123,
+      sessionDate: '2026-07-07',
       signalTitle: '',
       signalParagraphs: [],
       carryForward: '',

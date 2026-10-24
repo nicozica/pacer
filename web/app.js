@@ -7,6 +7,12 @@ let currentWeather = '—';
 let currentEditorBootstrap = null;
 let currentEditorSession = null;
 let currentAiImport = null;
+let uiBusy = false;
+let saveInFlight = false;
+let workoutCheckSeq = 0;
+// Progress of the last Coachat save, keyed by activity + pasted text so a retry
+// repeats only the failed step and any edit starts a fresh run.
+let coachatRun = null;
 let editorLoadRequestId = 0;
 let isEditorResolving = false;
 
@@ -78,7 +84,6 @@ const FORM_INPUT_IDS = [
   'sleep-score',
   'restedness',
   'notes',
-  'tcx-attached',
 ];
 
 /* ------------------------------------------------------------------ */
@@ -147,19 +152,9 @@ function val(id) {
   return document.getElementById(id).value.trim();
 }
 
-function isChecked(id) {
-  const el = document.getElementById(id);
-  return Boolean(el && el.checked);
-}
-
 function setValue(id, value) {
   const el = document.getElementById(id);
   if (el) el.value = value ?? '';
-}
-
-function setChecked(id, checked) {
-  const el = document.getElementById(id);
-  if (el) el.checked = Boolean(checked);
 }
 
 function setLastUpdatedMessage(message) {
@@ -173,12 +168,6 @@ function toOptionalNumber(value) {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
-function defaultTcxFilename() {
-  if (!currentEditorSession) return '';
-  const { selectedSourceActivityId, source } = currentEditorSession;
-  return `pacer-${source.sessionDate}-${selectedSourceActivityId}.tcx`;
-}
-
 function defaultBriefFilename() {
   if (!currentEditorSession) return '';
   const { selectedSourceActivityId, source } = currentEditorSession;
@@ -187,6 +176,8 @@ function defaultBriefFilename() {
 
 function blankAiInput() {
   return {
+    sourceActivityId: currentEditorSession?.selectedSourceActivityId ?? null,
+    sessionDate: currentEditorSession?.source?.sessionDate ?? '',
     signalTitle: '',
     signalParagraphs: [],
     carryForward: '',
@@ -232,6 +223,8 @@ function summarizeAiForLog(ai) {
 function serializeAiInput(ai) {
   if (!ai || !hasAiContent(ai)) return '';
   return JSON.stringify({
+    sourceActivityId: ai.sourceActivityId,
+    sessionDate: ai.sessionDate,
     signalTitle: ai.signalTitle,
     signalParagraphs: ai.signalParagraphs,
     carryForward: ai.carryForward,
@@ -280,6 +273,22 @@ function normalizeAiNumber(value, label) {
   }
 
   throw new Error(`Field "${label}" must be a number or null.`);
+}
+
+function normalizeAiActivityId(value) {
+  const parsed = normalizeAiNumber(value, 'sourceActivityId');
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    throw new Error('Field "sourceActivityId" must be a positive integer.');
+  }
+  return parsed;
+}
+
+function normalizeAiSessionDate(value) {
+  const date = normalizeAiText(value, 'sessionDate');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    throw new Error('Field "sessionDate" must use YYYY-MM-DD format.');
+  }
+  return date;
 }
 
 function normalizeAiParagraphs(value) {
@@ -372,22 +381,61 @@ function formatJsonParseError(err, text) {
   return `JSON could not be parsed at ${location}: ${message}`;
 }
 
-function parseAiJsonText(text) {
-  if (!text.trim()) return blankAiInput();
+const COACHAT_RESPONSE_VERSION = 'coachat-response-v1';
+
+/**
+ * Classifies pasted text. `coachat-response-v1` envelopes yield the session
+ * analysis plus the raw future workout; bare session-ai-v1 objects stay
+ * supported as session-only input. A bare future-workout-v1 is rejected so the
+ * user never has to split a response by hand.
+ */
+function parseCoachatText(text) {
+  if (!text.trim()) return { kind: 'empty', ai: blankAiInput(), futureWorkout: null };
 
   let payload;
-
   try {
     payload = JSON.parse(text);
   } catch (err) {
     throw new Error(formatJsonParseError(err, text));
   }
-
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
-    throw new Error('AI JSON must be an object.');
+    throw new Error('Coachat JSON must be an object.');
   }
 
+  if (payload.contractVersion === COACHAT_RESPONSE_VERSION) {
+    const { sessionAi, futureWorkout } = payload;
+    if (!sessionAi || typeof sessionAi !== 'object' || Array.isArray(sessionAi)) throw new Error('"sessionAi" is missing or not an object.');
+    if (!futureWorkout || typeof futureWorkout !== 'object' || Array.isArray(futureWorkout)) throw new Error('"futureWorkout" is missing or not an object.');
+    if (readAiJsonField(sessionAi, 'sourceActivityId') === undefined || readAiJsonField(sessionAi, 'sessionDate') === undefined) {
+      throw new Error('sessionAi must include sourceActivityId and sessionDate.');
+    }
+    const ai = buildAiFromPayload(sessionAi);
+    window.PacerEditorState.assertAiIdentityMatchesSession(ai, currentEditorSession);
+    return { kind: 'envelope', ai, futureWorkout };
+  }
+  if (payload.contractVersion === 'future-workout-v1') {
+    throw new Error('This is only the workout. Paste the complete coachat-response-v1 reply, which also contains the session analysis.');
+  }
+  if (payload.contractVersion !== undefined) {
+    throw new Error(`Unsupported contractVersion "${payload.contractVersion}". Expected ${COACHAT_RESPONSE_VERSION}.`);
+  }
+  return { kind: 'legacy', ai: buildAiFromPayload(payload), futureWorkout: null };
+}
+
+function buildAiFromPayload(payload) {
+
+  // session-ai-v1 payloads predate explicit identity fields. Bind those legacy
+  // imports to the currently selected activity; explicit fields remain checked
+  // before save, so an import cannot silently target another session.
+  const identity = window.PacerEditorState.resolveAiIdentityFields(
+    readAiJsonField(payload, 'sourceActivityId'),
+    readAiJsonField(payload, 'sessionDate'),
+    currentEditorSession,
+  );
+
   return {
+    sourceActivityId: normalizeAiActivityId(identity.sourceActivityId),
+    sessionDate: normalizeAiSessionDate(identity.sessionDate),
     signalTitle: normalizeAiText(readAiJsonField(payload, 'signalTitle'), 'signalTitle'),
     signalParagraphs: normalizeAiParagraphs(readAiJsonField(payload, 'signalParagraphs')),
     carryForward: normalizeAiText(readAiJsonField(payload, 'carryForward'), 'carryForward'),
@@ -416,18 +464,63 @@ function renderAiPreview(ai) {
   const preview = document.getElementById('ai-preview');
 
   if (!ai || !hasAiContent(ai)) {
-    preview.innerHTML = '<p class="empty">No AI interpretation imported.</p>';
+    preview.innerHTML = '<p class="empty">Nothing imported.</p>';
     return;
   }
 
+  const row = (label, value) => (value ? `<p class="ai-preview-row"><strong>${label}:</strong> ${escapeHtml(value)}</p>` : '');
   preview.innerHTML = [
-    `<p class="ai-preview-row"><strong>Signal:</strong> ${escapeHtml(ai.signalTitle || '—')}</p>`,
-    `<p class="ai-preview-row"><strong>Next run:</strong> ${escapeHtml(ai.nextRunTitle || '—')}</p>`,
-    ai.nextRunWorkout
-      ? `<p class="ai-preview-row"><strong>Workout:</strong> ${escapeHtml(ai.nextRunWorkout.type)} · ${escapeHtml(String(ai.nextRunWorkout.blocks.length))} blocks</p>`
-      : '',
-    `<p class="ai-preview-row"><strong>Week:</strong> ${escapeHtml(ai.weekTitle || '—')}</p>`,
+    row('Signal', ai.signalTitle),
+    row('Next run', ai.nextRunTitle),
+    row('Week', ai.weekTitle),
   ].filter(Boolean).join('');
+}
+
+function renderWorkoutPreview(check) {
+  const el = document.getElementById('coachat-workout-preview');
+  if (!check || check.state === 'none') {
+    el.innerHTML = '<p class="empty">Nothing imported.</p>';
+  } else if (check.state === 'checking') {
+    el.innerHTML = '<p class="empty">Validating workout…</p>';
+  } else if (check.state === 'invalid') {
+    el.innerHTML = `<p class="empty">Workout not valid: ${escapeHtml(check.error)}</p>`;
+  } else {
+    el.innerHTML = window.PacerWorkoutFormat.renderWorkout(check.workout);
+  }
+}
+
+/** Validates the whole envelope server-side (identity, workout contract). */
+async function validateEnvelopeOnServer(envelopeText) {
+  const response = await fetch('/api/coachat/validate', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: envelopeText,
+  });
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(body.error || `Validation failed (${response.status}).`);
+  return body.futureWorkout;
+}
+
+async function runWorkoutCheck(rawText) {
+  const seq = ++workoutCheckSeq;
+  currentAiImport.workoutCheck = { state: 'checking', workout: null, error: '' };
+  renderWorkoutPreview(currentAiImport.workoutCheck);
+  setAiImportStatus('Validating Coachat response…');
+  applyActionState();
+  let check;
+  try {
+    check = { state: 'valid', workout: await validateEnvelopeOnServer(rawText), error: '' };
+  } catch (err) {
+    check = { state: 'invalid', workout: null, error: err.message || 'Workout could not be validated.' };
+  }
+  // A newer paste or edit supersedes this answer.
+  if (seq !== workoutCheckSeq || currentAiImport?.rawText !== rawText) return check;
+  currentAiImport.workoutCheck = check;
+  renderWorkoutPreview(check);
+  if (check.state === 'valid') setAiImportStatus('Coachat response is valid: session analysis and next workout.', 'valid');
+  else setAiImportStatus(`Invalid Coachat response: ${check.error}`, 'error');
+  applyActionState();
+  return check;
 }
 
 function syncAiImport(rawText, options = {}) {
@@ -436,47 +529,52 @@ function syncAiImport(rawText, options = {}) {
   if (textarea && textarea.value !== text) {
     textarea.value = text;
   }
-
-  const emptyState = {
-    rawText: '',
-    parsedAi: blankAiInput(),
-    isValid: true,
-    hasContent: false,
-    error: '',
-  };
+  workoutCheckSeq += 1;
 
   if (!text.trim()) {
-    currentAiImport = emptyState;
+    currentAiImport = {
+      rawText: '', kind: 'empty', parsedAi: blankAiInput(), futureWorkout: null,
+      workoutCheck: { state: 'none', workout: null, error: '' },
+      isValid: true, hasContent: false, error: '',
+    };
     renderAiPreview(currentAiImport.parsedAi);
-    setAiImportStatus(options.emptyMessage ?? 'Paste the JSON returned by ChatGPT or upload a `.json` file.');
+    renderWorkoutPreview(currentAiImport.workoutCheck);
+    setAiImportStatus(options.emptyMessage ?? 'Paste the JSON returned by Coachat.');
+    applyActionState();
     return currentAiImport;
   }
 
   try {
-    const parsedAi = parseAiJsonText(text);
+    const parsed = parseCoachatText(text);
     currentAiImport = {
-      rawText: text,
-      parsedAi,
-      isValid: true,
-      hasContent: hasAiContent(parsedAi),
-      error: '',
+      rawText: text, kind: parsed.kind, parsedAi: parsed.ai, futureWorkout: parsed.futureWorkout,
+      workoutCheck: { state: 'none', workout: null, error: '' },
+      isValid: true, hasContent: hasAiContent(parsed.ai), error: '',
     };
-    renderAiPreview(parsedAi);
-    setAiImportStatus(
-      options.validMessage ?? (currentAiImport.hasContent ? 'AI JSON ready.' : 'JSON parsed, but it does not contain AI fields yet.'),
-      'valid',
-    );
+    renderAiPreview(parsed.ai);
+    renderWorkoutPreview(currentAiImport.workoutCheck);
+    if (parsed.kind === 'envelope') {
+      void runWorkoutCheck(text);
+    } else {
+      setAiImportStatus(
+        options.validMessage ?? (currentAiImport.hasContent
+          ? 'Session analysis only (no workout in this JSON).'
+          : 'JSON parsed, but it does not contain session analysis fields.'),
+        'valid',
+      );
+    }
+    applyActionState();
     return currentAiImport;
   } catch (err) {
     currentAiImport = {
-      rawText: text,
-      parsedAi: blankAiInput(),
-      isValid: false,
-      hasContent: false,
-      error: err.message || 'Invalid AI JSON.',
+      rawText: text, kind: 'invalid', parsedAi: blankAiInput(), futureWorkout: null,
+      workoutCheck: { state: 'none', workout: null, error: '' },
+      isValid: false, hasContent: false, error: err.message || 'Invalid Coachat JSON.',
     };
     renderAiPreview(currentAiImport.parsedAi);
-    setAiImportStatus(`Invalid AI JSON: ${currentAiImport.error}`, 'error');
+    renderWorkoutPreview(currentAiImport.workoutCheck);
+    setAiImportStatus(`Invalid Coachat JSON: ${currentAiImport.error}`, 'error');
+    applyActionState();
     return currentAiImport;
   }
 }
@@ -502,9 +600,35 @@ function hideNotice() {
 }
 
 function setButtonsDisabled(disabled) {
-  ['btn-save', 'btn-save-publish', 'btn-copy', 'btn-download'].forEach((id) => {
-    document.getElementById(id).disabled = disabled;
-  });
+  uiBusy = disabled;
+  applyActionState();
+}
+
+/** An envelope must be fully validated before either save button is usable. */
+function isCoachatSaveable() {
+  const ai = currentAiImport;
+  if (!ai || ai.kind === 'empty') return true;
+  if (ai.kind === 'envelope') return ai.workoutCheck.state === 'valid';
+  return ai.kind === 'legacy';
+}
+
+function actionLabel(mode) {
+  const ai = currentAiImport;
+  if (coachatRun && ai && coachatRun.key === runKey(ai.rawText) && coachatRun.failed() && coachatRun.mode === mode) return 'Retry failed step';
+  if (mode === 'draft') return 'Save draft';
+  return ai?.kind === 'envelope' ? 'Publish & schedule' : 'Publish';
+}
+
+function applyActionState() {
+  document.getElementById('btn-copy').disabled = uiBusy;
+  document.getElementById('btn-download').disabled = uiBusy;
+  const blocked = uiBusy || saveInFlight || !currentEditorSession || !isCoachatSaveable();
+  document.getElementById('btn-save').disabled = blocked;
+  document.getElementById('btn-save-publish').disabled = blocked;
+  if (!saveInFlight) {
+    document.getElementById('btn-save').textContent = actionLabel('draft');
+    document.getElementById('btn-save-publish').textContent = actionLabel('publish');
+  }
 }
 
 async function fetchJson(url, options = {}) {
@@ -654,6 +778,7 @@ async function refreshTrainingData(options = {}) {
   const { updateButton = true, showFetchError = true } = options;
   const btn = document.getElementById('btn-refresh');
   const selectedSourceActivityId = currentEditorSession?.selectedSourceActivityId ?? null;
+  const previousLatestSourceActivityId = currentSummary?.latestRun?.sourceActivityId ?? null;
   const previousLastUpdated = document.getElementById('last-updated').textContent;
 
   if (updateButton && btn) {
@@ -665,10 +790,15 @@ async function refreshTrainingData(options = {}) {
   setLastUpdatedMessage('Refreshing training data…');
 
   try {
-    await hydrateAppState({
-      refresh: true,
-      sourceActivityId: selectedSourceActivityId,
+    await loadSummaryState(true);
+    const sourceActivityId = window.PacerEditorState.selectSourceActivityAfterRefresh({
+      selectedSourceActivityId,
+      previousLatestSourceActivityId,
+      currentLatestSourceActivityId: currentSummary?.latestRun?.sourceActivityId ?? null,
     });
+    await reloadEditorState(sourceActivityId);
+    renderSourceCard();
+    updateBrief();
   } catch (err) {
     if (document.getElementById('last-updated').textContent === 'Refreshing training data…') {
       setLastUpdatedMessage(previousLastUpdated || 'No data loaded');
@@ -688,6 +818,7 @@ async function refreshTrainingData(options = {}) {
 async function refreshAndPublish() {
   const btn = document.getElementById('btn-refresh');
   const selectedSourceActivityId = currentEditorSession?.selectedSourceActivityId ?? null;
+  const previousLatestSourceActivityId = currentSummary?.latestRun?.sourceActivityId ?? null;
   const previousLastUpdated = document.getElementById('last-updated').textContent;
 
   if (btn) {
@@ -703,7 +834,12 @@ async function refreshAndPublish() {
     currentSummary = response.summary;
     renderData();
     currentWeather = await loadWeatherForLatestActivity(currentSummary);
-    await reloadEditorState(selectedSourceActivityId);
+    const sourceActivityId = window.PacerEditorState.selectSourceActivityAfterRefresh({
+      selectedSourceActivityId,
+      previousLatestSourceActivityId,
+      currentLatestSourceActivityId: currentSummary?.latestRun?.sourceActivityId ?? null,
+    });
+    await reloadEditorState(sourceActivityId);
     renderSourceCard();
     updateBrief();
 
@@ -876,11 +1012,23 @@ function renderSourceCard() {
 
 function renderEditorMeta() {
   const saveStatus = document.getElementById('session-save-status');
+  const saveTarget = document.getElementById('session-save-target');
+  const olderWarning = document.getElementById('older-activity-warning');
 
   if (!currentEditorSession) {
     saveStatus.textContent = 'No session selected';
+    saveTarget.textContent = 'Save target: no session selected';
+    olderWarning.textContent = '';
+    olderWarning.classList.add('hidden');
     return;
   }
+
+  const { selectedSourceActivityId, source } = currentEditorSession;
+  saveTarget.textContent = `Save target: ${source.sessionDate} · ${source.title} · activity ${selectedSourceActivityId}`;
+  const latestSourceActivityId = currentSummary?.latestRun?.sourceActivityId ?? null;
+  const isEditingOlder = latestSourceActivityId !== null && selectedSourceActivityId !== latestSourceActivityId;
+  olderWarning.textContent = isEditingOlder ? `Editing an older run: ${source.sessionDate}` : '';
+  olderWarning.classList.toggle('hidden', !isEditingOlder);
 
   if (currentEditorSession.savedSessionId) {
     const formatted = formatTimestamp(currentEditorSession.updatedAt);
@@ -892,7 +1040,7 @@ function renderEditorMeta() {
   }
 }
 
-function fillEditorForm() {
+function fillEditorForm(options = {}) {
   const session = currentEditorSession;
   if (!session) return;
 
@@ -902,28 +1050,31 @@ function fillEditorForm() {
   setValue('restedness', session.manual.restedness);
   setValue('notes', session.manual.extraNotes);
 
-  setChecked('tcx-attached', session.files.tcxAttached);
   setValue('ai-json-file', '');
+  // After a Coachat save the pasted envelope stays put so a failed step can be retried.
+  if (options.keepCoachatText) return;
   syncAiImport(serializeAiInput(session.ai), {
-    emptyMessage: 'Paste the JSON returned by ChatGPT or upload a `.json` file.',
-    validMessage: hasAiContent(session.ai) ? 'Loaded saved AI JSON.' : 'No AI interpretation imported.',
+    emptyMessage: 'Paste the JSON returned by Coachat.',
+    validMessage: hasAiContent(session.ai) ? 'Loaded saved session analysis.' : 'Nothing imported.',
   });
 }
 
-function renderEditorState() {
+function renderEditorState(options = {}) {
   renderSourceOptions();
   renderEditorMeta();
   renderSourceCard();
   if (currentEditorSession) {
-    fillEditorForm();
+    fillEditorForm(options);
     setButtonsDisabled(false);
   } else {
     syncAiImport('', {
-      emptyMessage: 'Paste the JSON returned by ChatGPT or upload a `.json` file.',
+      emptyMessage: 'Paste the JSON returned by Coachat.',
     });
     setButtonsDisabled(true);
   }
   updateBrief();
+  // Lets the workout list tell completed workouts from upcoming ones.
+  window.PacerWorkouts?.setRuns(currentEditorBootstrap?.recentRuns ?? []);
 }
 
 async function reloadEditorState(sourceActivityId = null) {
@@ -967,13 +1118,15 @@ function collectEditorPayload() {
     throw new Error('No session selected.');
   }
 
-  const aiState = syncAiImport(document.getElementById('ai-json-input').value, {
-    emptyMessage: 'Paste the JSON returned by ChatGPT or upload a `.json` file.',
-    validMessage: 'AI JSON loaded.',
-  });
+  // saveCurrentSession() has just synced the pasted text; do not re-parse (and re-validate) here.
+  const aiState = currentAiImport;
 
   if (!aiState.isValid) {
-    throw new Error(`Invalid AI JSON: ${aiState.error}`);
+    throw new Error(`Invalid Coachat JSON: ${aiState.error}`);
+  }
+
+  if (hasAiContent(aiState.parsedAi)) {
+    window.PacerEditorState.assertAiIdentityMatchesSession(aiState.parsedAi, currentEditorSession);
   }
 
   return {
@@ -986,99 +1139,270 @@ function collectEditorPayload() {
       extraNotes: val('notes'),
     },
     files: {
-      tcxFilename: isChecked('tcx-attached')
-        ? (currentEditorSession.files.tcxFilename || defaultTcxFilename())
-        : '',
-      tcxAttached: isChecked('tcx-attached'),
+      // Not user-editable any more; carry saved values through unchanged.
+      tcxFilename: currentEditorSession.files.tcxFilename || '',
+      tcxAttached: Boolean(currentEditorSession.files.tcxAttached),
       briefFilename: currentEditorSession.files.briefFilename || defaultBriefFilename(),
     },
     ai: aiState.parsedAi,
   };
 }
 
-async function saveCurrentSession(publish) {
+function runKey(rawText) {
+  return `${currentEditorSession?.selectedSourceActivityId ?? ''}\n${rawText}`;
+}
+
+const PIPELINE_STEPS = ['session', 'workout', 'approve', 'sync', 'publish'];
+
+function newCoachatRun(rawText, mode) {
+  return {
+    key: runKey(rawText), mode, planned: [], current: '',
+    state: { session: 'idle', workout: 'idle', approve: 'idle', sync: 'idle', publish: 'idle' },
+    error: { session: '', workout: '', approve: '', sync: '', publish: '' },
+    operation: '', workoutId: '', eventId: '', publishInfo: null,
+    failed() { return PIPELINE_STEPS.some((step) => this.state[step] === 'failed'); },
+  };
+}
+
+const WORKOUT_OPERATION_TEXT = {
+  created: 'Stored as a new workout.',
+  revised: 'Stored as a new revision.',
+  unchanged: 'Already stored, unchanged. No duplicate created.',
+};
+
+function renderCoachatResult(run) {
+  const list = document.getElementById('coachat-result');
+  if (!run) { list.classList.add('hidden'); list.innerHTML = ''; return; }
+  const planned = (step) => run.planned.includes(step);
+  const mark = (step) => (run.state[step] === 'ok' ? 'ok' : run.state[step] === 'failed' ? 'failed' : run.current === step ? 'pending' : 'skipped');
+  const rows = [];
+  const add = (label, cls, text) => rows.push(`<li class="is-${cls}"><strong>${label}</strong><span>${escapeHtml(text)}</span></li>`);
+
+  if (planned('session')) {
+    const st = mark('session');
+    add('Session', st, st === 'ok' ? 'Saved locally.' : st === 'failed' ? `Not saved: ${run.error.session}` : st === 'pending' ? 'Saving…' : 'Not started.');
+  }
+  if (planned('workout')) {
+    const st = mark('workout');
+    add('Next workout', st, st === 'ok' ? (WORKOUT_OPERATION_TEXT[run.operation] || 'Stored.')
+      : st === 'failed' ? `Not stored: ${run.error.workout}`
+      : st === 'pending' ? 'Importing…'
+      : run.state.session === 'failed' ? 'Not imported because the session was not saved.' : 'Not started.');
+  }
+  if (planned('approve') || planned('sync')) {
+    let cls; let text;
+    if (run.state.sync === 'ok') { cls = 'ok'; text = 'Approved and synced to Intervals.icu.'; }
+    else if (run.state.sync === 'failed') { cls = 'failed'; text = `Approved, but not synced: ${run.error.sync} It is not on your calendar.`; }
+    else if (run.state.approve === 'failed') { cls = 'failed'; text = `Not approved: ${run.error.approve}`; }
+    else if (run.current === 'approve' || run.current === 'sync') { cls = 'pending'; text = run.current === 'approve' ? 'Approving…' : 'Syncing…'; }
+    else { cls = 'skipped'; text = run.state.approve === 'ok' ? 'Approved. Sync not started.' : 'Not started.'; }
+    add('Intervals.icu', cls, text);
+  }
+  if (planned('publish')) {
+    const st = mark('publish');
+    add('run.nico.ar', st, st === 'ok' ? 'Published.' : st === 'failed' ? `Not published: ${run.error.publish}` : st === 'pending' ? 'Publishing…' : 'Not started.');
+  }
+  list.innerHTML = rows.join('');
+  list.classList.remove('hidden');
+}
+
+async function postJson(url, body) {
+  return fetchJson(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+}
+
+/** Saves through the existing endpoint; publish=true also exports, builds and deploys. */
+async function persistSession(run, payload, publish) {
+  const response = await postJson(publish ? '/api/editor/save-and-publish' : '/api/editor/save', payload);
+  currentEditorBootstrap = response.bootstrap;
+  currentEditorSession = response.bootstrap.selectedSession;
+  run.state.session = 'ok';
+  return response;
+}
+
+function describePublishFailure(status) {
+  const tail = Array.isArray(status.outputTail) && status.outputTail.length > 0 ? ` Last output: ${status.outputTail[status.outputTail.length - 1]}` : '';
+  return `${status.message}.${status.logFile ? ` Log: ${status.logFile}.` : ''}${tail}`;
+}
+
+function canonicalJson(value) {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
+  if (value && typeof value === 'object') {
+    return `{${Object.keys(value).sort().filter((key) => value[key] !== undefined).map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`).join(',')}}`;
+  }
+  return JSON.stringify(value);
+}
+
+const WORKOUT_CONTENT_FIELDS = ['proposalKey', 'proposalRevision', 'sourceSession', 'schedule', 'workoutType', 'title', 'coachingNotes', 'blocks'];
+
+/** The stored workout whose content (ignoring lifecycle) equals the pasted one, or null. */
+async function findIdenticalStoredWorkout(pasted) {
+  const { proposals } = await fetchJson('/api/workouts');
+  const pick = (workout) => canonicalJson(WORKOUT_CONTENT_FIELDS.map((field) => workout[field]));
+  const wanted = pick(pasted);
+  return (proposals || []).map((record) => record.workout).find((workout) => workout && pick(workout) === wanted) || null;
+}
+
+const STEP_RUNNERS = {
+  async session(run, ctx) { await persistSession(run, ctx.payload, false); },
+  async workout(run, ctx) {
+    try {
+      const result = await postJson('/api/workouts/import', ctx.ai.futureWorkout);
+      run.operation = result.operation;
+      run.workoutId = result.proposal?.workout?.pacerWorkoutId || '';
+    } catch (err) {
+      // Once a workout is approved its stored lifecycle differs from the freshly pasted one, so the
+      // server reports a same-revision "conflict" even for identical content. Accept that only when
+      // the stored content is exactly what was pasted.
+      if (!/conflicts with the stored revision/i.test(err.message || '')) throw err;
+      const stored = await findIdenticalStoredWorkout(ctx.ai.futureWorkout);
+      if (!stored) throw err;
+      run.operation = 'unchanged';
+      run.workoutId = stored.pacerWorkoutId;
+    }
+  },
+  async approve(run) {
+    const result = await postJson(`/api/workouts/${encodeURIComponent(run.workoutId)}/approve`, {});
+    if (result.proposal?.workout?.lifecycle?.approvalStatus !== 'approved') throw new Error('The workout was not approved.');
+  },
+  async sync(run) {
+    // The sync API answers 200 even when Intervals.icu rejected it; the lifecycle tells the truth.
+    const result = await fetchJson(`/api/workouts/${encodeURIComponent(run.workoutId)}/sync`, { method: 'POST' });
+    const lifecycle = result.proposal?.workout?.lifecycle || {};
+    if (lifecycle.syncStatus !== 'synced') throw new Error(lifecycle.lastSyncError || 'Intervals.icu did not accept the workout.');
+    run.eventId = lifecycle.intervalsEventId || '';
+  },
+  async publish(run, ctx) {
+    const response = await persistSession(run, ctx.payload, true);
+    run.publishInfo = response.publishStatus || null;
+    if (response.publishStatus && !response.publishStatus.ok) throw new Error(describePublishFailure(response.publishStatus));
+  },
+};
+
+function plannedSteps(mode, envelope) {
+  if (mode === 'draft') return envelope ? ['session', 'workout'] : ['session'];
+  return envelope ? PIPELINE_STEPS : ['publish'];
+}
+
+let publishConfirmOpen = false;
+function confirmPublishSchedule(envelope) {
+  const dialog = document.getElementById('publish-confirm-dialog');
+  const detail = document.getElementById('publish-confirm-detail');
+  const effects = document.getElementById('publish-confirm-effects');
+  const cancel = document.getElementById('publish-confirm-cancel');
+  const submit = document.getElementById('publish-confirm-submit');
+  if (!dialog || publishConfirmOpen) return Promise.resolve(false);
+  publishConfirmOpen = true;
+  const previousFocus = document.activeElement;
+  detail.textContent = envelope
+    ? 'This will make the session public and schedule the reviewed next workout.'
+    : 'This will make the session public on run.nico.ar.';
+  effects.innerHTML = envelope
+    ? '<li>Publish this session to run.nico.ar.</li><li>Approve and synchronize the next workout with Intervals.icu.</li>'
+    : '<li>Publish this session to run.nico.ar.</li>';
+  submit.textContent = envelope ? 'Publish & schedule' : 'Publish';
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (approved) => {
+      if (settled) return; settled = true; publishConfirmOpen = false;
+      dialog.removeEventListener('cancel', onCancel); cancel.removeEventListener('click', onCancel); submit.removeEventListener('click', onSubmit);
+      if (dialog.open) dialog.close();
+      if (previousFocus instanceof HTMLElement) previousFocus.focus();
+      resolve(approved);
+    };
+    const onCancel = (event) => { event.preventDefault(); finish(false); };
+    const onSubmit = () => finish(true);
+    dialog.addEventListener('cancel', onCancel); cancel.addEventListener('click', onCancel); submit.addEventListener('click', onSubmit);
+    dialog.showModal();
+    cancel.focus();
+  });
+}
+
+async function saveCurrentSession(mode) {
+  if (saveInFlight) return;
   hideError();
   hideNotice();
 
-  const actionLabel = publish ? 'save-and-publish' : 'save';
-  const submittedAiRawText = document.getElementById('ai-json-input').value;
-  const saveButton = document.getElementById(publish ? 'btn-save-publish' : 'btn-save');
-  const originalText = saveButton.textContent;
-  let buttonsLocked = false;
+  if (mode === 'publish' && !await confirmPublishSchedule(currentAiImport?.kind === 'envelope')) return;
+
+  const rawText = document.getElementById('ai-json-input').value;
+  saveInFlight = true;
+  setButtonsDisabled(true);
+  document.getElementById(mode === 'draft' ? 'btn-save' : 'btn-save-publish').textContent = 'Working…';
+  let keepText = false;
 
   try {
-    const payload = collectEditorPayload();
-
-    setButtonsDisabled(true);
-    buttonsLocked = true;
-    saveButton.textContent = publish ? 'Publishing…' : 'Saving…';
-
-    if (publish) {
-      showNotice('Publishing run.nico.ar… Exporting snapshots, building, deploying, and verifying production.');
+    // 1. Validate everything before the first write.
+    let ai = syncAiImport(rawText);
+    if (ai.kind === 'envelope') {
+      const check = await runWorkoutCheck(rawText);
+      if (check.state !== 'valid') throw new Error(`Nothing was saved. ${check.error}`);
+      ai = currentAiImport;
     }
+    const payload = collectEditorPayload();
+    const envelope = ai.kind === 'envelope';
+    keepText = envelope;
 
-    console.info(`[Pacer UI] ${actionLabel} payload`, {
-      sourceActivityId: payload.sourceActivityId,
-      manual: payload.manual,
-      files: payload.files,
-      ai: summarizeAiForLog(payload.ai),
-    });
-    const response = await fetchJson(publish ? '/api/editor/save-and-publish' : '/api/editor/save', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(payload),
-    });
+    // 2. Resume a run with a failed step; a draft may be upgraded to publish without redoing its steps.
+    // Anything else starts fresh (every write is idempotent, so a repeat is safe).
+    const resume = coachatRun && coachatRun.key === runKey(rawText)
+      && (coachatRun.failed() || (coachatRun.mode === 'draft' && mode === 'publish'));
+    if (!resume) coachatRun = newCoachatRun(rawText, mode);
+    const run = coachatRun;
+    run.mode = mode;
+    run.planned = plannedSteps(mode, envelope);
+    for (const step of run.planned) if (run.state[step] === 'failed') { run.state[step] = 'idle'; run.error[step] = ''; }
+    if (mode === 'publish') { run.state.publish = 'idle'; }
+    renderCoachatResult(run);
 
-    console.info(`[Pacer UI] ${actionLabel} completed`, {
-      publishStatus: response.publishStatus ?? null,
-      savedSessionId: response.bootstrap?.selectedSession?.savedSessionId ?? null,
-      updatedAt: response.bootstrap?.selectedSession?.updatedAt ?? null,
-    });
-
-    currentEditorBootstrap = response.bootstrap;
-    currentEditorSession = response.bootstrap.selectedSession;
-    renderEditorState();
-
-    if (publish && response.publishStatus) {
-      if (response.publishStatus.ok) {
-        const publicBase = response.publishStatus.publicUrl || 'https://run.nico.ar';
-        const publicPath = response.publishStatus.expectedSessionPath || '/';
-        const visibleAt = `${publicBase.replace(/\/$/, '')}${publicPath}`;
-        const targetSuffix = response.publishStatus.deployTarget
-          ? ` Target: ${response.publishStatus.deployTarget}.`
-          : '';
-        showNotice(`${response.publishStatus.message}.${targetSuffix} Visible at ${visibleAt}`);
-      } else {
-        console.error('[Pacer UI] Publish hook reported failure', response.publishStatus);
-        hideNotice();
-        syncAiImport(submittedAiRawText, {
-          validMessage: 'AI JSON kept in editor after failed publish.',
-          emptyMessage: 'Paste the JSON returned by ChatGPT or upload a `.json` file.',
-        });
-        const logSuffix = response.publishStatus.logFile
-          ? ` Log: ${response.publishStatus.logFile}`
-          : '';
-        const tailSuffix = Array.isArray(response.publishStatus.outputTail) && response.publishStatus.outputTail.length > 0
-          ? ` Last output: ${response.publishStatus.outputTail[response.publishStatus.outputTail.length - 1]}`
-          : '';
-        showError(`Session saved locally, but publish failed. AI JSON was kept in the editor. ${response.publishStatus.message}.${logSuffix}${tailSuffix}`);
+    // 3. Run the steps in order and stop at the first failure. Completed steps are never rolled back,
+    // and nothing after a failed step is attempted.
+    const ctx = { payload, ai };
+    for (const step of run.planned) {
+      if (run.state[step] === 'ok' && step !== 'publish') continue;
+      if (step === 'publish' && run.state.publish === 'ok') continue;
+      run.current = step;
+      renderCoachatResult(run);
+      try {
+        await STEP_RUNNERS[step](run, ctx);
+        run.state[step] = 'ok';
+      } catch (err) {
+        console.error(`[Pacer UI] ${step} failed`, err);
+        run.state[step] = 'failed';
+        run.error[step] = err.message || 'Unknown error.';
+        break;
       }
-    } else if (publish && response.publishArtifacts?.generatedAt) {
-      showNotice(`Session saved and snapshots refreshed at ${formatTimestamp(response.publishArtifacts.generatedAt)}.`);
+    }
+    run.current = '';
+    renderCoachatResult(run);
+    if (envelope) await window.PacerWorkouts?.reload(run.workoutId || null);
+    if (run.state.session === 'ok' || (!envelope && run.state.publish === 'ok')) renderEditorState({ keepCoachatText: keepText });
+
+    // 4. Summarise honestly.
+    const failedStep = run.planned.find((step) => run.state[step] === 'failed');
+    if (failedStep) {
+      const done = run.planned.filter((step) => run.state[step] === 'ok');
+      const names = { session: 'session saved', workout: 'workout stored', approve: 'workout approved', sync: 'synced to Intervals.icu', publish: 'published' };
+      const failedNames = { session: 'saving the session', workout: 'storing the workout', approve: 'approving the workout', sync: 'syncing to Intervals.icu', publish: 'publishing' };
+      showError(`Stopped at ${failedNames[failedStep]}. ${done.length ? `Done: ${done.map((step) => names[step]).join(', ')}. ` : 'Nothing was saved. '}Your pasted JSON was kept. Use "Retry failed step".`);
+      if (!envelope) syncAiImport(rawText);
+    } else if (mode === 'publish') {
+      const status = run.publishInfo;
+      const visibleAt = status ? `${(status.publicUrl || 'https://run.nico.ar').replace(/\/$/, '')}${status.expectedSessionPath || '/'}` : '';
+      showNotice(envelope
+        ? `Published to run.nico.ar and scheduled in Intervals.icu.${visibleAt ? ` Visible at ${visibleAt}` : ''}`
+        : `Published to run.nico.ar.${visibleAt ? ` Visible at ${visibleAt}` : ''}`);
     } else {
-      showNotice('Session saved locally. No build or deploy ran. Use "Save and publish" to publish run.nico.ar.');
+      showNotice(envelope
+        ? 'Draft saved: session saved and workout stored. Nothing was published, approved or synced.'
+        : 'Draft saved. Nothing was published.');
     }
   } catch (err) {
-    console.error(`[Pacer UI] ${actionLabel} threw`, err);
+    console.error('[Pacer UI] save aborted before writes', err);
     hideNotice();
     showError(err.message || 'Could not save session.');
   } finally {
-    if (buttonsLocked) {
-      setButtonsDisabled(false);
-    }
-    saveButton.textContent = originalText;
+    saveInFlight = false;
+    setButtonsDisabled(false);
   }
 }
 
@@ -1088,8 +1412,7 @@ async function importAiJsonFile(file) {
   try {
     const text = await file.text();
     syncAiImport(text, {
-      validMessage: 'AI JSON loaded.',
-      emptyMessage: 'Paste the JSON returned by ChatGPT or upload a `.json` file.',
+      emptyMessage: 'Paste the JSON returned by Coachat.',
     });
     setValue('ai-json-file', '');
   } catch {
@@ -1108,6 +1431,8 @@ function selectedSessionText() {
   if (!session) return 'Selected session: none';
 
   const lines = [`Selected session: ${session.title} (${session.sport}) — ${session.sessionDate}`];
+  lines.push(`  Source activity ID: ${currentEditorSession.selectedSourceActivityId}`);
+  lines.push(`  Session date: ${session.sessionDate}`);
   if (typeof session.distanceKm === 'number') lines.push(`  Distance: ${session.distanceKm.toFixed(1)} km`);
   lines.push(`  Moving time: ${session.movingTimeLabel}`);
   if (session.elapsedTimeLabel && session.elapsedTimeLabel !== '—') lines.push(`  Elapsed time: ${session.elapsedTimeLabel}`);
@@ -1129,12 +1454,50 @@ function lapText(lap) {
   return `Lap ${lap.lapIndex}: ${parts.join(' | ') || '—'}`;
 }
 
+function detectedIntervalsText() {
+  if (isEditorResolving) {
+    return ['Detected intervals: resolving activity detail and streams…'];
+  }
+
+  if (Array.isArray(currentEditorSession?.garminDeviceLaps) && currentEditorSession.garminDeviceLaps.length > 0) {
+    return window.PacerBriefSegments.summarizeDetectedIntervals(currentEditorSession?.intervalsSegments);
+  }
+
+  return window.PacerBriefSegments.formatDetectedIntervals(currentEditorSession?.intervalsSegments);
+}
+
+function garminDeviceLapsText() {
+  if (isEditorResolving) {
+    return ['Garmin device laps: resolving original FIT…'];
+  }
+
+  return window.PacerBriefSegments.formatGarminDeviceLaps(currentEditorSession?.garminDeviceLaps);
+}
+
+function wellnessText() {
+  if (isEditorResolving) {
+    return ['Wellness: resolving Intervals.icu daily context…'];
+  }
+
+  return window.PacerBriefSegments.formatWellness(currentEditorSession?.wellness);
+}
+
+function existingLapsHeading() {
+  if (currentEditorSession?.lapSource === 'intervals') return '--- KM SPLITS ---';
+  if (currentEditorSession?.lapSource === 'tcx') return '--- TCX FALLBACK LAPS ---';
+  return '--- KM SPLITS ---';
+}
+
 function buildBriefText() {
   const today = new Date().toISOString().slice(0, 10);
   const lines = [`== TRAINING BRIEF — ${today} ==`, ''];
 
   lines.push('--- SELECTED SESSION ---');
   lines.push(selectedSessionText());
+  if (currentEditorSession) {
+    lines.push('');
+    lines.push(...window.PacerEditorState.buildCoachatResponseBriefLines(currentEditorSession));
+  }
 
   lines.push('');
   lines.push('--- CURRENT TRAINING CONTEXT ---');
@@ -1156,10 +1519,23 @@ function buildBriefText() {
   lines.push(`Legs: ${val('legs') || '—'}`);
   lines.push(`Sleep: score ${val('sleep-score') ? `${val('sleep-score')}/100` : '—'} | restedness ${val('restedness') || '—'}`);
   lines.push(`Extra notes: ${val('notes') || '—'}`);
-  lines.push(`Files: ${isChecked('tcx-attached') ? 'TCX attached' : 'TCX not attached'}`);
 
   lines.push('');
-  lines.push('--- LAPS ---');
+  lines.push('--- WELLNESS & RECOVERY CONTEXT ---');
+  lines.push(...wellnessText());
+
+  lines.push('');
+  lines.push('--- GARMIN DEVICE LAPS (ORIGINAL FIT) ---');
+  lines.push(window.PacerBriefSegments.garminDeviceLapsDisclaimer);
+  lines.push(...garminDeviceLapsText());
+
+  lines.push('');
+  lines.push('--- DETECTED WORKOUT INTERVALS (INTERVALS.ICU) ---');
+  lines.push(window.PacerBriefSegments.detectedIntervalsDisclaimer);
+  lines.push(...detectedIntervalsText());
+
+  lines.push('');
+  lines.push(existingLapsHeading());
   const laps = Array.isArray(currentEditorSession?.laps) ? currentEditorSession.laps : [];
   if (isEditorResolving) {
     lines.push('Laps: resolving activity detail and streams…');
@@ -1231,18 +1607,17 @@ document.getElementById('source-activity').addEventListener('change', async (eve
 });
 
 document.getElementById('btn-save').addEventListener('click', async () => {
-  await saveCurrentSession(false);
+  await saveCurrentSession('draft');
 });
 
 document.getElementById('btn-save-publish').addEventListener('click', async () => {
-  await saveCurrentSession(true);
+  await saveCurrentSession('publish');
 });
 
 document.getElementById('ai-json-input').addEventListener('input', () => {
-  syncAiImport(document.getElementById('ai-json-input').value, {
-    validMessage: 'AI JSON loaded.',
-    emptyMessage: 'Paste the JSON returned by ChatGPT or upload a `.json` file.',
-  });
+  const text = document.getElementById('ai-json-input').value;
+  if (coachatRun && coachatRun.key !== runKey(text)) renderCoachatResult(null);
+  syncAiImport(text);
 });
 
 document.getElementById('ai-json-file').addEventListener('change', async (event) => {
@@ -1277,8 +1652,7 @@ document.getElementById('btn-download').addEventListener('click', () => {
 
 FORM_INPUT_IDS.forEach((id) => {
   const element = document.getElementById(id);
-  const eventName = element && element.type === 'checkbox' ? 'change' : 'input';
-  element.addEventListener(eventName, updateBrief);
+  element.addEventListener('input', updateBrief);
 });
 
 /* ------------------------------------------------------------------ */

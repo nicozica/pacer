@@ -18,7 +18,7 @@
   <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png?v=7">
   <link rel="shortcut icon" href="/favicon.ico?v=7">
   <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png?v=7">
-  <link rel="stylesheet" href="style.css?v=20260828b">
+  <link rel="stylesheet" href="style.css?v=20261022a">
 </head>
 <body>
 
@@ -61,6 +61,8 @@
       </label>
     </div>
     <p id="session-save-status" class="status-line subtle">No session selected</p>
+    <p id="session-save-target" class="status-line save-target">Save target: no session selected</p>
+    <p id="older-activity-warning" class="older-activity-warning hidden" role="status"></p>
     <div id="source-card" class="source-card">—</div>
   </section>
 
@@ -109,41 +111,66 @@
     </div>
   </section>
 
-  <section id="brief-section">
-    <h2>Brief for ChatGPT</h2>
-    <div class="brief-toolbar">
-      <label for="tcx-attached" class="checkbox-label">
-        <input type="checkbox" id="tcx-attached">
-        <span>TCX attached in ChatGPT</span>
-      </label>
-    </div>
-    <textarea id="brief-preview" rows="22" readonly></textarea>
-    <div class="actions brief-actions">
-      <button id="btn-copy" class="button-primary">Copy brief</button>
-      <button id="btn-download" class="button-quiet">Download .txt</button>
-    </div>
-  </section>
+  <section id="coachat-section" aria-labelledby="coachat-heading">
+    <h2 id="coachat-heading">Coachat</h2>
 
-  <section id="ai-section">
-    <h2>AI Interpretation</h2>
-    <div class="ai-import-grid">
-      <label class="full-width">Coachat JSON
-        <textarea id="ai-json-input" rows="10" placeholder='Paste the AI interpretation JSON here'></textarea>
+    <div class="coachat-step" id="coachat-brief">
+      <h3><span class="step-num">1</span> Training Brief</h3>
+      <textarea id="brief-preview" rows="14" readonly aria-label="Training Brief"></textarea>
+      <div class="actions brief-actions">
+        <button id="btn-copy" class="button-primary">Copy Training Brief</button>
+        <button id="btn-download" class="button-quiet">Download .txt</button>
+      </div>
+    </div>
+
+    <div class="coachat-step" id="coachat-paste">
+      <h3><span class="step-num">2</span> Coachat response</h3>
+      <label class="full-width">Paste the single JSON reply
+        <textarea id="ai-json-input" rows="8" placeholder='Paste the coachat-response-v1 JSON here'></textarea>
       </label>
       <div class="ai-import-toolbar">
-        <label class="file-label">Upload .json
+        <label class="file-label">Or upload .json
           <input type="file" id="ai-json-file" accept=".json,application/json">
         </label>
       </div>
-      <p id="ai-import-status" class="field-help ai-status">Paste the JSON returned by ChatGPT or upload a `.json` file.</p>
-      <div id="ai-preview" class="ai-preview">
-        <p class="empty">No AI interpretation imported.</p>
+      <p id="ai-import-status" class="field-help ai-status" role="status" aria-live="polite">Paste the JSON returned by Coachat.</p>
+    </div>
+
+    <div class="coachat-step" id="coachat-review">
+      <h3><span class="step-num">3</span> Review and save</h3>
+      <div class="coachat-preview-grid">
+        <div>
+          <h4>Session analysis</h4>
+          <div id="ai-preview" class="ai-preview"><p class="empty">Nothing imported.</p></div>
+        </div>
+        <div>
+          <h4>Next workout</h4>
+          <div id="coachat-workout-preview" class="ai-preview"><p class="empty">Nothing imported.</p></div>
+        </div>
       </div>
       <div class="actions save-actions">
-        <button id="btn-save">Save session</button>
-        <button id="btn-save-publish" class="button-primary">Save and publish</button>
-        <div id="save-banner" class="notice hidden" role="status" aria-live="polite"></div>
+        <button id="btn-save-publish" class="button-primary">Publish &amp; schedule</button>
+        <button id="btn-save" class="button-quiet">Save draft</button>
       </div>
+      <dialog id="publish-confirm-dialog" class="confirm-dialog" aria-modal="true" aria-labelledby="publish-confirm-title" aria-describedby="publish-confirm-detail">
+        <form method="dialog" class="confirm-dialog__surface">
+          <h3 id="publish-confirm-title">Publish this session?</h3>
+          <p id="publish-confirm-detail">This publishes the session to run.nico.ar.</p>
+          <ul id="publish-confirm-effects" class="confirm-dialog__effects"></ul>
+          <div class="actions confirm-dialog__actions">
+            <button id="publish-confirm-cancel" class="button-quiet" value="cancel" type="button">Cancel</button>
+            <button id="publish-confirm-submit" class="button-primary" value="confirm" type="button">Publish &amp; schedule</button>
+          </div>
+        </form>
+      </dialog>
+      <ul id="coachat-result" class="coachat-result hidden" role="status" aria-live="polite"></ul>
+      <div id="save-banner" class="notice hidden" role="status" aria-live="polite"></div>
+    </div>
+
+    <div class="coachat-step" id="coachat-workouts">
+      <h3><span class="step-num">4</span> <span id="workouts-heading">Next workout</span></h3>
+      <div id="future-workout-list" class="future-workout-list" aria-live="polite"><p class="empty">Loading workouts…</p></div>
+      <p id="future-workout-status" class="field-help" role="status" aria-live="polite"></p>
     </div>
   </section>
 
@@ -157,6 +184,10 @@
   </a>
 </footer>
 
-<script src="app.js?v=20260828b"></script>
+<script src="workout-format.js?v=20261022a"></script>
+<script src="editor-state.js?v=20261022a"></script>
+<script src="brief-segments.js?v=20261022a"></script>
+<script src="app.js?v=20261022a"></script>
+<script src="future-workouts.js?v=20261022a"></script>
 </body>
 </html>

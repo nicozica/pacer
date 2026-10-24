@@ -3,6 +3,8 @@ import { listStoredSessions } from "./storage";
 
 function toAiInput(session: ReturnType<typeof listStoredSessions>[number]["ai"]) {
   return {
+    sourceActivityId: session.sourceActivityId,
+    sessionDate: session.sessionDate,
     signalTitle: session.signalTitle,
     signalParagraphs: session.signalParagraphs,
     carryForward: session.carryForward,

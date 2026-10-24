@@ -1,6 +1,7 @@
 import { config } from '../config';
-import type { SourceActivity, SourceStreamPayload } from '../session/source';
+import type { SourceActivity, SourceActivitySegment, SourceStreamPayload } from '../session/source';
 import { buildActivityNameMetadata } from './activity-names';
+import { parseGarminFitLaps } from './fit-laps';
 import type { TrainingFetchOptions, TrainingSource } from './source';
 
 const API_BASE = 'https://intervals.icu/api/v1';
@@ -239,6 +240,8 @@ export function normalizeIntervalsActivity(raw: RawIntervalsActivity): SourceAct
   const sourceActivityUrl = pickSourceUrl(raw, id);
   const polyline = pickPolyline(raw);
 
+  const intervalsSegments = normalizeIntervalsActivitySegments(raw);
+
   return {
     id,
     source: 'intervals',
@@ -266,9 +269,48 @@ export function normalizeIntervalsActivity(raw: RawIntervalsActivity): SourceAct
     calories: pickNumber(raw, ['calories', 'kcal', 'calories_burned']),
     training_load: pickNumber(raw, ['icu_training_load', 'training_load']),
     device_name: pickString(raw, ['device_name', 'device', 'source']),
+    pairedEventId: normalizeIntervalsId(raw.paired_event_id) ?? null,
     start_latlng: pickLatLng(raw),
     map: polyline ? { summary_polyline: polyline } : undefined,
+    ...(intervalsSegments.length > 0 ? { intervalsSegments } : {}),
   };
+}
+
+/**
+ * Normalizes Intervals.icu's `icu_intervals` response returned by
+ * GET /activity/{id}?intervals=true. These are detected/completed segments;
+ * they are deliberately kept separate from source laps and kilometre splits.
+ */
+export function normalizeIntervalsActivitySegments(raw: RawIntervalsActivity): SourceActivitySegment[] {
+  const rawIntervals = raw.icu_intervals;
+  if (!Array.isArray(rawIntervals)) return [];
+
+  return rawIntervals.flatMap((entry, index): SourceActivitySegment[] => {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return [];
+
+    const interval = entry as RawIntervalsActivity;
+    const averageSpeed = numberValue(interval.average_speed);
+    const sourceIntervalId = numberValue(interval.id);
+
+    return [{
+      source: 'intervals',
+      provenance: 'intervals_icu_intervals',
+      sourceIntervalId: sourceIntervalId !== undefined && Number.isInteger(sourceIntervalId) ? sourceIntervalId : null,
+      intervalIndex: index + 1,
+      intervalType: pickString(interval, ['type']) ?? null,
+      label: pickString(interval, ['label']) ?? null,
+      startTimeS: numberValue(interval.start_time) ?? null,
+      endTimeS: numberValue(interval.end_time) ?? null,
+      movingTimeS: numberValue(interval.moving_time) ?? null,
+      elapsedTimeS: numberValue(interval.elapsed_time) ?? null,
+      distanceM: numberValue(interval.distance) ?? null,
+      averageSpeedMps: averageSpeed ?? null,
+      averagePaceSecPerKm: averageSpeed && averageSpeed > 0 ? Math.round(1000 / averageSpeed) : null,
+      averageHeartrate: numberValue(interval.average_heartrate) ?? null,
+      startIndex: numberValue(interval.start_index) ?? null,
+      endIndex: numberValue(interval.end_index) ?? null,
+    }];
+  });
 }
 
 async function intervalsGet<T>(path: string, params: Record<string, string | number> = {}): Promise<T> {
@@ -309,6 +351,18 @@ async function intervalsGetText(path: string, params: Record<string, string | nu
   }
 
   return response.text();
+}
+
+async function intervalsGetBuffer(path: string): Promise<Buffer> {
+  const response = await fetch(`${API_BASE}${path}`, {
+    headers: { Authorization: authHeader(), Accept: 'application/octet-stream' },
+  });
+
+  if (!response.ok) {
+    throw new Error(`Intervals.icu API error on ${path} (${response.status}). Check INTERVALS_API_KEY and INTERVALS_ATHLETE_ID.`);
+  }
+
+  return Buffer.from(await response.arrayBuffer());
 }
 
 function intervalsActivityApiId(sourceActivityId: number): string {
@@ -375,7 +429,7 @@ export function createIntervalsSource(): TrainingSource {
     },
     async fetchActivityDetail(sourceActivityId: number): Promise<SourceActivity | null> {
       try {
-        const raw = await intervalsGet<unknown>(`/activity/${intervalsActivityApiId(sourceActivityId)}`);
+        const raw = await intervalsGet<unknown>(`/activity/${intervalsActivityApiId(sourceActivityId)}`, { intervals: 'true' });
         return raw && typeof raw === 'object' ? normalizeIntervalsActivity(raw as RawIntervalsActivity) : null;
       } catch {
         return null;
@@ -385,6 +439,14 @@ export function createIntervalsSource(): TrainingSource {
       try {
         const raw = await intervalsGet<unknown>(`/activity/${intervalsActivityApiId(sourceActivityId)}/streams`);
         return normalizeIntervalsStreamPayload(raw);
+      } catch {
+        return null;
+      }
+    },
+    async fetchActivityGarminDeviceLaps(sourceActivityId: number) {
+      try {
+        const content = await intervalsGetBuffer(`/activity/${intervalsActivityApiId(sourceActivityId)}/file`);
+        return await parseGarminFitLaps(content);
       } catch {
         return null;
       }

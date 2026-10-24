@@ -9,6 +9,7 @@ import {
   createTrainingSource,
   getConfiguredTrainingSourceName,
 } from './source';
+import { autoNameFetchedIntervalsActivities } from './automatic-activity-naming';
 
 interface ActivitiesBundle {
   fetched_at: string;
@@ -91,4 +92,5 @@ export async function fetchAndSaveActivities(options: FetchAndSaveActivitiesOpti
   fs.writeFileSync(outputFile, JSON.stringify(bundle, null, 2));
 
   console.log(`${activities.length} activities saved to: ${outputFile}`);
+  await autoNameFetchedIntervalsActivities(activities);
 }

@@ -24,6 +24,7 @@ import {
   getStoredSessionBySourceActivityId,
   initSessionStore,
   listPublishedSessions,
+  listStoredFutureWorkouts,
   listStoredSessionSummaries,
   markSessionPublished,
   reassignSessionSourceActivityId,
@@ -63,6 +64,9 @@ import { deployRunSite } from './deploy';
 import { deriveActivityContext, isRideActivity, isTrainingActivity } from '../activity-context';
 import { getActivitySourceLabel, getTrainingSourceForBundle } from '../training/source';
 import { CANONICAL_SESSION_TYPES, buildActivityNameMetadata, normalizeSessionTypeAlias } from '../training/activity-names';
+import { validateSessionAiIdentity } from './identity';
+import { findMatchingRace, listRaces } from '../races/service';
+import { estimateFutureWorkoutDistanceKm } from '../workouts/distance';
 
 const DAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const SESSION_TYPES: Set<string> = new Set(CANONICAL_SESSION_TYPES);
@@ -87,6 +91,8 @@ function blankFiles(): SessionFilesInput {
 
 function blankAI(): SessionAIInput {
   return {
+    sourceActivityId: null,
+    sessionDate: '',
     signalTitle: '',
     signalParagraphs: [],
     carryForward: '',
@@ -233,6 +239,19 @@ function formatDistanceKm(distanceM: number | null): number | null {
 }
 
 function getActivityTitle(activity: SourceActivity): string {
+  if (isRunLike(activity)) {
+    try {
+      const race = findMatchingRace(listRaces(), {
+        date: (activity.start_date_local || activity.start_date).slice(0, 10),
+        distanceKm: typeof activity.distance === 'number' ? activity.distance / 1000 : null,
+        workoutCode: getActivityWorkoutCode(activity),
+      });
+      if (race) return race.title;
+    } catch {
+      // Race-calendar configuration must not prevent normal activity rendering.
+    }
+  }
+
   return activity.displayActivityName || buildActivityNameMetadata(activity.name, getActivityType(activity)).displayActivityName;
 }
 
@@ -490,6 +509,8 @@ async function buildEditorSession(bundle: ActivityBundle, sourceActivityId: numb
     files,
     ai: stored
       ? {
+        sourceActivityId,
+        sessionDate: (activity.start_date_local || activity.start_date).slice(0, 10),
         signalTitle: stored.ai.signalTitle,
         signalParagraphs: stored.ai.signalParagraphs,
         carryForward: stored.ai.carryForward,
@@ -504,9 +525,16 @@ async function buildEditorSession(bundle: ActivityBundle, sourceActivityId: numb
         weekTitle: stored.ai.weekTitle,
         weekSummary: stored.ai.weekSummary,
       }
-      : blankAI(),
+      : {
+        ...blankAI(),
+        sourceActivityId,
+        sessionDate: (activity.start_date_local || activity.start_date).slice(0, 10),
+      },
     laps: normalizedLaps.laps,
     lapSource: normalizedLaps.lapSource,
+    intervalsSegments: resolvedSource.intervalsSegments,
+    garminDeviceLaps: resolvedSource.garminDeviceLaps,
+    wellness: resolvedSource.wellness,
     updatedAt: stored?.core.updatedAt ?? null,
   };
 }
@@ -753,6 +781,8 @@ function buildLatestExport(session: StoredSession, sourceActivity: SourceActivit
     manual,
     files: session.files,
     ai: {
+      sourceActivityId: session.core.sourceActivityId,
+      sessionDate: session.core.sessionDate,
       signalTitle: session.ai.signalTitle,
       signalParagraphs: session.ai.signalParagraphs,
       carryForward: session.ai.carryForward,
@@ -775,6 +805,16 @@ function buildLatestExport(session: StoredSession, sourceActivity: SourceActivit
 function buildNextRunExport(session: StoredSession): SessionExportNextRun | null {
   if (!session.ai.nextRunTitle && !session.ai.nextRunSummary) return null;
   const workout = withNextRunWorkoutTitle(session.ai.nextRunWorkout, session.ai.nextRunTitle);
+  const explicitDistanceKm = session.ai.nextRunDistanceKm;
+  const plannedWorkout = explicitDistanceKm === null
+    ? listStoredFutureWorkouts().find(({ workout: candidate }) => candidate.sourceSession.sourceActivityId === session.core.sourceActivityId
+      && candidate.sourceSession.sessionDate === session.core.sessionDate
+      && candidate.lifecycle.approvalStatus !== 'rejected'
+      && candidate.lifecycle.approvalStatus !== 'superseded')
+    : null;
+  const distanceKm = explicitDistanceKm ?? (plannedWorkout
+    ? estimateFutureWorkoutDistanceKm(plannedWorkout.workout.blocks)
+    : null);
 
   return {
     fromSessionId: session.core.id,
@@ -784,7 +824,7 @@ function buildNextRunExport(session: StoredSession): SessionExportNextRun | null
     type: workout?.type ?? null,
     durationMin: session.ai.nextRunDurationMin,
     durationMax: session.ai.nextRunDurationMax,
-    distanceKm: session.ai.nextRunDistanceKm,
+    distanceKm,
     paceMinSecPerKm: session.ai.nextRunPaceMinSecPerKm,
     paceMaxSecPerKm: session.ai.nextRunPaceMaxSecPerKm,
     ...(workout ? { workout } : {}),
@@ -857,6 +897,10 @@ function sanitizeAiInput(input: SaveSessionInput['ai']): SessionAIInput {
   const nextRunWorkout = sanitizeNextRunWorkout(input?.nextRunWorkout);
 
   return {
+    sourceActivityId: typeof input?.sourceActivityId === 'number' && Number.isInteger(input.sourceActivityId)
+      ? input.sourceActivityId
+      : null,
+    sessionDate: sanitizeText(input?.sessionDate),
     signalTitle: sanitizeText(input?.signalTitle),
     signalParagraphs: sanitizeParagraphs(input?.signalParagraphs),
     carryForward: sanitizeText(input?.carryForward),
@@ -1183,7 +1227,6 @@ export async function saveSession(input: SaveSessionInput, options: SaveSessionO
   publishArtifacts: PublishArtifacts | null;
   publishStatus: PublishStatus | null;
 }> {
-  initSessionStore();
   const bundle = readActivityBundle();
   if (!bundle) {
     throw new Error('Could not find activities.latest.json. Refresh training data first.');
@@ -1191,13 +1234,21 @@ export async function saveSession(input: SaveSessionInput, options: SaveSessionO
 
   const resolvedSource = await resolveSourceActivity(bundle, input.sourceActivityId);
   const activity = resolvedSource.activity;
+  const sessionDate = (activity.start_date_local || activity.start_date).slice(0, 10);
+  const ai = sanitizeAiInput(input.ai);
+  if (hasAiContent(ai)) {
+    validateSessionAiIdentity(ai, {
+      sourceActivityId: input.sourceActivityId,
+      sessionDate,
+    });
+  }
+  initSessionStore();
   const matchedSession = findStoredSessionForActivity(activity);
   const existing = matchedSession.session && matchedSession.matchedBy === 'fingerprint'
     ? reassignSessionSourceActivityId(matchedSession.session.core.id, bundle.source, input.sourceActivityId)
     : matchedSession.session;
   const manual = sanitizeManualInput(input.manual);
   const files = sanitizeFilesInput(input.files);
-  const ai = sanitizeAiInput(input.ai);
   const aiMetadata: SessionAIMetadata = {
     modelName: options.aiMetadata?.modelName ?? existing?.ai.modelName ?? null,
     promptVersion: options.aiMetadata?.promptVersion ?? existing?.ai.promptVersion ?? null,
@@ -1206,7 +1257,6 @@ export async function saveSession(input: SaveSessionInput, options: SaveSessionO
       : null,
   };
   const weather = await resolveWeather(activity, resolvedSource.tempStream, existing);
-  const sessionDate = (activity.start_date_local || activity.start_date).slice(0, 10);
 
   const normalizedLaps = buildNormalizedLaps({
     sourceLaps: resolvedSource.laps,
@@ -1361,6 +1411,8 @@ const INITIAL_SEEDS: Array<{
       briefFilename: '2026-03-12-session-brief.txt',
     },
     ai: {
+      sourceActivityId: 17694891984,
+      sessionDate: '2026-03-12',
       signalTitle: 'Solid aerobic signal',
       signalParagraphs: [
         'The session stayed honest from the first kilometer and never drifted into panic pacing. That usually points to aerobic work landing in the right place.',
@@ -1399,6 +1451,8 @@ const INITIAL_SEEDS: Array<{
       briefFilename: '2026-03-17-session-brief.txt',
     },
     ai: {
+      sourceActivityId: 17751752060,
+      sessionDate: '2026-03-17',
       signalTitle: 'Not a pure easy run',
       signalParagraphs: [
         'The pace stayed manageable, but the internal cost drifted above what a fully easy day would usually ask for. That does not make it a bad run, but it changes how the next step should be framed.',

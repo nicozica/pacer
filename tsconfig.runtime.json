@@ -6,8 +6,10 @@
   },
   "include": [
     "src/config/**/*",
+    "src/coachat/**/*",
     "src/session/**/*",
     "src/training/**/*",
+    "src/workouts/**/*",
     "src/utils/**/*",
     "src/web/**/*"
   ],

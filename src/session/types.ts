@@ -13,6 +13,8 @@ export interface SessionFilesInput {
 }
 
 export interface SessionAIInput {
+  sourceActivityId: number | null;
+  sessionDate: string;
   signalTitle: string;
   signalParagraphs: string[];
   carryForward: string;
@@ -139,6 +141,9 @@ export interface EditorSession {
   ai: SessionAIInput;
   laps: SessionLapRecord[];
   lapSource: 'intervals' | 'tcx' | 'none';
+  intervalsSegments: import('./source').SourceActivitySegment[];
+  garminDeviceLaps: import('./source').SourceGarminDeviceLap[];
+  wellness: import('./source').SourceWellnessContext | null;
   updatedAt: string | null;
 }
 

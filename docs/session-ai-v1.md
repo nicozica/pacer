@@ -12,6 +12,11 @@ It is intentionally small. The goal is not to automate coaching logic yet, but t
 4. The operator pastes that JSON into the AI import block in Pacer, or uploads it as a `.json` file.
 5. Pacer stores the result in `session_ai`.
 
+Current briefs also include `sourceActivityId` and `sessionDate` as an identity
+envelope. Return them when supplied: Pacer validates them before saving. Older
+`session-ai-v1` JSON without those fields remains valid and is bound to the
+currently selected activity, so it cannot be imported until an activity is selected.
+
 ## Fields
 
 - `signal_title`

@@ -19,6 +19,12 @@ export interface RaceInput {
   priority?: unknown;
 }
 
+export interface RaceActivityMatchInput {
+  date: string;
+  distanceKm: number | null;
+  workoutCode: string | null;
+}
+
 function validateDate(value: unknown): string {
   if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) {
     throw new Error('Race date must use YYYY-MM-DD.');
@@ -118,6 +124,30 @@ function writeRaces(races: RaceDefinition[]): void {
 
 function sortRaces(races: RaceDefinition[]): RaceDefinition[] {
   return [...races].sort((left, right) => left.date.localeCompare(right.date) || left.title.localeCompare(right.title));
+}
+
+export function findMatchingRace(
+  races: RaceDefinition[],
+  activity: RaceActivityMatchInput,
+): RaceDefinition | null {
+  if (!activity.workoutCode || !Number.isFinite(activity.distanceKm) || (activity.distanceKm ?? 0) <= 0) {
+    return null;
+  }
+
+  const sameDay = races.filter((race) => race.date === activity.date);
+  if (sameDay.length === 0) return null;
+
+  const distanceKm = activity.distanceKm as number;
+  const candidates = sameDay
+    .map((race) => ({
+      race,
+      differenceKm: Math.abs(distanceKm - race.distanceKm),
+      toleranceKm: Math.max(0.5, race.distanceKm * 0.03),
+    }))
+    .filter((candidate) => candidate.differenceKm <= candidate.toleranceKm)
+    .sort((left, right) => left.differenceKm - right.differenceKm);
+
+  return candidates[0]?.race ?? null;
 }
 
 function uniqueGeneratedSlug(title: string, date: string, races: RaceDefinition[]): string {

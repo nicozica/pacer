@@ -48,6 +48,7 @@ export const config = {
   // Intervals.icu API settings
   trainingSource: process.env.TRAINING_SOURCE ?? 'intervals',
   intervalsApiKey: process.env.INTERVALS_API_KEY ?? '',
+  intervalsApiBaseUrl: process.env.INTERVALS_API_BASE_URL ?? 'https://intervals.icu/api/v1',
   intervalsAthleteId: process.env.INTERVALS_ATHLETE_ID ?? '0',
   intervalsFetchDays: parseIntWithFallback(process.env.INTERVALS_FETCH_DAYS, 180),
 

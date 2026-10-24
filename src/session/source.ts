@@ -1,6 +1,8 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { config } from '../config';
+import { isWellnessCacheFresh, shouldCacheGarminDeviceLaps } from '../training/cache-freshness';
+import { buildIntervalsWellnessContext } from '../training/wellness';
 import { ensureDir } from '../utils/storage';
 import { createTrainingSource, getTrainingSourceForBundle } from '../training/source';
 
@@ -35,10 +37,17 @@ export interface SourceActivity {
   calories?: number;
   training_load?: number;
   device_name?: string | null;
+  /** Intervals.icu relation to the calendar event that generated this completed activity, when supplied. */
+  pairedEventId?: number | null;
   start_latlng?: number[];
   map?: {
     summary_polyline?: string;
   };
+  /**
+   * Intervals.icu's detected/completed activity intervals. These are neither
+   * Garmin laps nor Pacer's reconstructed kilometre splits.
+   */
+  intervalsSegments?: SourceActivitySegment[];
 }
 
 export interface SourceLap {
@@ -48,6 +57,73 @@ export interface SourceLap {
   moving_time?: number;
   average_speed?: number;
   average_heartrate?: number;
+}
+
+export interface SourceActivitySegment {
+  source: 'intervals';
+  provenance: 'intervals_icu_intervals';
+  sourceIntervalId: number | null;
+  intervalIndex: number;
+  intervalType: string | null;
+  label: string | null;
+  startTimeS: number | null;
+  endTimeS: number | null;
+  movingTimeS: number | null;
+  elapsedTimeS: number | null;
+  distanceM: number | null;
+  averageSpeedMps: number | null;
+  averagePaceSecPerKm: number | null;
+  averageHeartrate: number | null;
+  startIndex: number | null;
+  endIndex: number | null;
+}
+
+export interface SourceGarminDeviceLap {
+  source: 'garmin_fit';
+  provenance: 'intervals_activity_original_fit';
+  lapIndex: number;
+  lapTrigger: string | null;
+  startOffsetS: number | null;
+  endOffsetS: number | null;
+  movingTimeS: number | null;
+  elapsedTimeS: number | null;
+  distanceM: number | null;
+  paceSecPerKm: number | null;
+  averageHeartrate: number | null;
+}
+
+export interface SourceWellnessDay {
+  source: 'intervals';
+  provenance: 'intervals_athlete_wellness';
+  date: string;
+  updatedAt: string | null;
+  sleepDurationS: number | null;
+  sleepScore: number | null;
+  sleepQuality: number | null;
+  restingHeartRate: number | null;
+  hrv: number | null;
+  weightKg: number | null;
+  fitnessCtl: number | null;
+  fatigueAtl: number | null;
+  acuteTrainingLoad: number | null;
+  chronicTrainingLoad: number | null;
+  rampRate: number | null;
+}
+
+export interface SourceWellnessContext {
+  source: 'intervals';
+  provenance: 'intervals_athlete_wellness';
+  sessionDate: string;
+  fetchedAt: string;
+  sessionDay: SourceWellnessDay | null;
+  recent: {
+    daysConsidered: number;
+    daysWithSleep: number;
+    daysWithRestingHeartRate: number;
+    averageSleepDurationS: number | null;
+    averageSleepScore: number | null;
+    averageRestingHeartRate: number | null;
+  };
 }
 
 export interface SourceStreamPayload {
@@ -73,6 +149,9 @@ export interface SourceWeather {
 export interface ResolvedSourceActivity {
   activity: SourceActivity;
   laps: SourceLap[];
+  intervalsSegments: SourceActivitySegment[];
+  garminDeviceLaps: SourceGarminDeviceLap[];
+  wellness: SourceWellnessContext | null;
   tempStream: number[] | null;
   streamPayload: SourceStreamPayload | null;
 }
@@ -116,6 +195,14 @@ function getActivitiesBundlePath(): string {
 
 function getStreamPayloadPath(sourceActivityId: number): string {
   return path.join(config.storageDir, 'json', 'streams', `${sourceActivityId}.json`);
+}
+
+function getGarminDeviceLapsPath(sourceActivityId: number): string {
+  return path.join(config.storageDir, 'json', 'fit-laps', `${sourceActivityId}.json`);
+}
+
+function getWellnessContextPath(sourceActivityId: number): string {
+  return path.join(config.storageDir, 'json', 'wellness', `${sourceActivityId}.json`);
 }
 
 function parseIsoTimestamp(isoString: string): number {
@@ -240,6 +327,79 @@ function writeCachedActivityStreamPayload(sourceActivityId: number, payload: Sou
   const filePath = getStreamPayloadPath(sourceActivityId);
   ensureDir(path.dirname(filePath));
   fs.writeFileSync(filePath, JSON.stringify(payload, null, 2));
+}
+
+function readCachedGarminDeviceLaps(sourceActivityId: number): SourceGarminDeviceLap[] | null {
+  const filePath = getGarminDeviceLapsPath(sourceActivityId);
+  if (!fs.existsSync(filePath)) return null;
+
+  try {
+    const parsed = JSON.parse(fs.readFileSync(filePath, 'utf8')) as { laps?: unknown };
+    return Array.isArray(parsed.laps) && parsed.laps.length > 0 ? parsed.laps as SourceGarminDeviceLap[] : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeCachedGarminDeviceLaps(sourceActivityId: number, laps: SourceGarminDeviceLap[]): void {
+  const filePath = getGarminDeviceLapsPath(sourceActivityId);
+  ensureDir(path.dirname(filePath));
+  fs.writeFileSync(filePath, JSON.stringify({
+    version: 1,
+    source: 'intervals_activity_original_fit',
+    sourceActivityId,
+    fetchedAt: new Date().toISOString(),
+    laps,
+  }, null, 2));
+}
+
+function readCachedWellnessContext(sourceActivityId: number): SourceWellnessContext | null {
+  const filePath = getWellnessContextPath(sourceActivityId);
+  if (!fs.existsSync(filePath)) return null;
+  try {
+    const parsed = JSON.parse(fs.readFileSync(filePath, 'utf8')) as SourceWellnessContext;
+    return parsed?.provenance === 'intervals_athlete_wellness' && typeof parsed.sessionDate === 'string'
+      ? parsed
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeCachedWellnessContext(sourceActivityId: number, context: SourceWellnessContext): void {
+  const filePath = getWellnessContextPath(sourceActivityId);
+  ensureDir(path.dirname(filePath));
+  fs.writeFileSync(filePath, JSON.stringify(context, null, 2));
+}
+
+function shiftIsoDate(date: string, days: number): string {
+  const timestamp = Date.parse(`${date}T12:00:00Z`);
+  if (Number.isNaN(timestamp)) return date;
+  return new Date(timestamp + days * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+}
+
+async function fetchWellnessContext(
+  bundle: ActivityBundle,
+  sourceActivityId: number,
+  sessionDate: string,
+): Promise<SourceWellnessContext | null> {
+  const cached = readCachedWellnessContext(sourceActivityId);
+  if (cached?.sessionDate === sessionDate && isWellnessCacheFresh(sessionDate, cached.fetchedAt)) return cached;
+
+  const source = createTrainingSource(getTrainingSourceForBundle(bundle.source));
+  if (!source.fetchWellness) return null;
+
+  try {
+    const context = buildIntervalsWellnessContext(sessionDate, await source.fetchWellness({
+      oldest: shiftIsoDate(sessionDate, -6),
+      newest: sessionDate,
+    }));
+    writeCachedWellnessContext(sourceActivityId, context);
+    return context;
+  } catch {
+    // A temporary API failure must not erase a previously useful local record.
+    return cached?.sessionDate === sessionDate ? cached : null;
+  }
 }
 
 export function paceSecPerKmFromSpeed(speedMetersPerSecond: number): number | null {
@@ -400,6 +560,11 @@ async function fetchActivityStreamPayloadById(bundle: ActivityBundle, sourceActi
   return source.fetchActivityStreams ? source.fetchActivityStreams(sourceActivityId) : null;
 }
 
+async function fetchGarminDeviceLapsById(bundle: ActivityBundle, sourceActivityId: number): Promise<SourceGarminDeviceLap[] | null> {
+  const source = createTrainingSource(getTrainingSourceForBundle(bundle.source));
+  return source.fetchActivityGarminDeviceLaps ? source.fetchActivityGarminDeviceLaps(sourceActivityId) : null;
+}
+
 export async function resolveSourceActivity(bundle: ActivityBundle, sourceActivityId: number): Promise<ResolvedSourceActivity> {
   const bundledActivity = findActivityById(bundle, sourceActivityId);
   const source = createTrainingSource(getTrainingSourceForBundle(bundle.source));
@@ -427,13 +592,27 @@ export async function resolveSourceActivity(bundle: ActivityBundle, sourceActivi
     writeCachedActivityStreamPayload(sourceActivityId, streamPayload);
   }
 
+  const cachedGarminDeviceLaps = readCachedGarminDeviceLaps(sourceActivityId);
+  const fetchedGarminDeviceLaps = cachedGarminDeviceLaps === null
+    ? await fetchGarminDeviceLapsById(bundle, sourceActivityId)
+    : null;
+  const garminDeviceLaps = cachedGarminDeviceLaps ?? fetchedGarminDeviceLaps ?? [];
+  if (shouldCacheGarminDeviceLaps(fetchedGarminDeviceLaps)) {
+    writeCachedGarminDeviceLaps(sourceActivityId, fetchedGarminDeviceLaps);
+  }
+
   const bundledTempStream = bundledActivity ? getActivityTempStreamFromBundle(bundle, sourceActivityId) : null;
   const tempStream = bundledTempStream ?? getTempStreamFromPayload(streamPayload);
   const enrichedActivity = enrichActivityFromStreams(activity, streamPayload);
+  const sessionDate = (activity.start_date_local || activity.start_date).slice(0, 10);
+  const wellness = await fetchWellnessContext(bundle, sourceActivityId, sessionDate);
 
   return {
     activity: enrichedActivity,
     laps,
+    intervalsSegments: Array.isArray(activity.intervalsSegments) ? activity.intervalsSegments : [],
+    garminDeviceLaps,
+    wellness,
     tempStream,
     streamPayload,
   };

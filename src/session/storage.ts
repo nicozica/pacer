@@ -16,6 +16,8 @@ import {
   WeeklyBar,
   WeeklySnapshotRecord,
 } from './types';
+import type { FutureWorkoutLifecycle, FutureWorkoutProposal } from '../workouts/types';
+import { futureWorkoutIdentityKey } from '../workouts/contract';
 
 interface PersistedSessionInput {
   core: Omit<SessionCoreRecord, 'id' | 'createdAt' | 'updatedAt' | 'publishedAt'>;
@@ -49,6 +51,54 @@ export interface SessionFingerprintInput {
 }
 
 type SqliteDatabase = Database.Database;
+
+export interface StoredFutureWorkoutRevision {
+  revision: number;
+  action: 'imported' | 'revised' | 'approved';
+  recordedAt: string;
+  proposal: FutureWorkoutProposal;
+}
+
+export interface StoredFutureWorkout {
+  workout: FutureWorkoutProposal;
+  createdAt: string;
+  storedAt: string;
+  revisions: StoredFutureWorkoutRevision[];
+}
+
+export interface FutureWorkoutImportResult {
+  operation: 'created' | 'unchanged' | 'revised';
+  stored: StoredFutureWorkout;
+}
+
+export interface StoredFutureWorkoutRenameInput {
+  pacerWorkoutId: string;
+  proposalKey: string;
+  expectedTitle: string;
+  nextTitle: string;
+  expectedIntervalsEventId: string;
+  dryRun?: boolean;
+}
+
+export interface StoredSessionFeedbackUpdateInput {
+  sessionId: number;
+  sourceActivityId: number;
+  sessionDate: string;
+  expectedLapCount: number;
+  expected: { signalTitle: string; signalParagraphs: string[]; carryForward: string };
+  next: { signalTitle: string; signalParagraphs: string[]; carryForward: string };
+  dryRun?: boolean;
+}
+
+export interface StoredSessionNextRunTitleUpdateInput {
+  sessionId: number;
+  sourceActivityId: number;
+  sessionDate: string;
+  expectedLapCount: number;
+  expectedNextRunTitle: string;
+  nextRunTitle: string;
+  dryRun?: boolean;
+}
 
 let database: SqliteDatabase | null = null;
 
@@ -304,6 +354,101 @@ function migrate(db: SqliteDatabase): void {
 
     migrationV6();
   }
+
+  if (currentVersion < 7) {
+    const migrationV7 = db.transaction(() => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS future_workouts (
+          pacer_workout_id TEXT PRIMARY KEY,
+          identity_key TEXT NOT NULL UNIQUE,
+          proposal_key TEXT NOT NULL,
+          proposal_revision INTEGER NOT NULL,
+          source_activity_id INTEGER NOT NULL,
+          source_session_date TEXT NOT NULL,
+          scheduled_local_date TEXT NOT NULL,
+          timezone TEXT NOT NULL,
+          workout_type TEXT NOT NULL,
+          title TEXT NOT NULL,
+          coaching_notes TEXT NOT NULL,
+          proposal_json TEXT NOT NULL,
+          approval_status TEXT NOT NULL CHECK (approval_status IN ('proposed', 'approved', 'rejected', 'superseded')),
+          approved_at TEXT,
+          approval_note TEXT,
+          sync_status TEXT NOT NULL CHECK (sync_status IN ('not_requested', 'syncing', 'synced', 'failed')),
+          synced_at TEXT,
+          intervals_event_id TEXT,
+          last_sync_error TEXT,
+          created_at TEXT NOT NULL,
+          stored_at TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS future_workout_revisions (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          pacer_workout_id TEXT NOT NULL,
+          proposal_revision INTEGER NOT NULL,
+          action TEXT NOT NULL CHECK (action IN ('imported', 'revised', 'approved')),
+          proposal_json TEXT NOT NULL,
+          recorded_at TEXT NOT NULL,
+          UNIQUE(pacer_workout_id, proposal_revision, action),
+          FOREIGN KEY (pacer_workout_id) REFERENCES future_workouts(pacer_workout_id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_future_workouts_schedule ON future_workouts(scheduled_local_date ASC, pacer_workout_id ASC);
+        CREATE INDEX IF NOT EXISTS idx_future_workouts_source ON future_workouts(source_activity_id, source_session_date);
+        CREATE INDEX IF NOT EXISTS idx_future_workout_revisions_workout ON future_workout_revisions(pacer_workout_id, id ASC);
+      `);
+      db.pragma('user_version = 7');
+    });
+
+    migrationV7();
+  }
+  if (currentVersion < 8) {
+    // SQLite cannot alter a CHECK constraint. Rebuild the v7 table inside one
+    // transaction; foreign keys are temporarily disabled only for the swap.
+    db.pragma('foreign_keys = OFF');
+    try {
+      db.transaction(() => {
+      db.exec(`CREATE TABLE future_workouts_v8 (
+          pacer_workout_id TEXT PRIMARY KEY, identity_key TEXT NOT NULL UNIQUE,
+          proposal_key TEXT NOT NULL, proposal_revision INTEGER NOT NULL,
+          source_activity_id INTEGER NOT NULL, source_session_date TEXT NOT NULL,
+          scheduled_local_date TEXT NOT NULL, timezone TEXT NOT NULL,
+          workout_type TEXT NOT NULL, title TEXT NOT NULL, coaching_notes TEXT NOT NULL,
+          proposal_json TEXT NOT NULL,
+          approval_status TEXT NOT NULL CHECK (approval_status IN ('proposed','approved','rejected','superseded')),
+          approved_at TEXT, approval_note TEXT,
+          sync_status TEXT NOT NULL CHECK (sync_status IN ('not_requested','syncing','synced','failed')),
+          synced_at TEXT, intervals_event_id TEXT, last_sync_error TEXT,
+          sync_attempted_at TEXT, created_at TEXT NOT NULL, stored_at TEXT NOT NULL
+        );
+        INSERT INTO future_workouts_v8 (
+          pacer_workout_id,identity_key,proposal_key,proposal_revision,source_activity_id,source_session_date,
+          scheduled_local_date,timezone,workout_type,title,coaching_notes,proposal_json,approval_status,
+          approved_at,approval_note,sync_status,synced_at,intervals_event_id,last_sync_error,created_at,stored_at
+        ) SELECT pacer_workout_id,identity_key,proposal_key,proposal_revision,source_activity_id,source_session_date,
+          scheduled_local_date,timezone,workout_type,title,coaching_notes,proposal_json,approval_status,
+          approved_at,approval_note,sync_status,synced_at,intervals_event_id,last_sync_error,created_at,stored_at
+          FROM future_workouts;`);
+        if (process.env.PACER_TEST_FAIL_V8_MIGRATION === 'true') {
+          throw new Error('Injected v8 migration failure.');
+        }
+        db.exec(`
+        DROP TABLE future_workouts;
+        ALTER TABLE future_workouts_v8 RENAME TO future_workouts;
+        CREATE INDEX idx_future_workouts_schedule ON future_workouts(scheduled_local_date ASC, pacer_workout_id ASC);
+        CREATE INDEX idx_future_workouts_source ON future_workouts(source_activity_id, source_session_date);
+        CREATE TABLE IF NOT EXISTS future_workout_sync_attempts (
+          id INTEGER PRIMARY KEY AUTOINCREMENT, pacer_workout_id TEXT NOT NULL,
+          status TEXT NOT NULL CHECK (status IN ('syncing','synced','failed')),
+          remote_event_id TEXT, error TEXT, attempted_at TEXT NOT NULL,
+          FOREIGN KEY (pacer_workout_id) REFERENCES future_workouts(pacer_workout_id) ON DELETE CASCADE
+        );`);
+      db.pragma('user_version = 8');
+      })();
+    } finally {
+      db.pragma('foreign_keys = ON');
+    }
+  }
 }
 
 function toNullableText(value: unknown): string | null {
@@ -433,6 +578,8 @@ function mapSession(db: SqliteDatabase, coreRow: Record<string, unknown>): Store
       briefFilename: filesRow && typeof filesRow.brief_filename === 'string' ? filesRow.brief_filename : '',
     },
     ai: {
+      sourceActivityId: core.sourceActivityId,
+      sessionDate: core.sessionDate,
       signalTitle: aiRow && typeof aiRow.signal_title === 'string' ? aiRow.signal_title : '',
       signalParagraphs: parseJsonArray(aiRow?.signal_paragraphs_json),
       carryForward: aiRow && typeof aiRow.carry_forward === 'string' ? aiRow.carry_forward : '',
@@ -856,4 +1003,325 @@ export function getLatestWeeklySnapshot(): WeeklySnapshotRecord | null {
     summary: toNullableText(row.summary),
     bars: JSON.parse(String(row.bars_json)) as WeeklyBar[],
   };
+}
+
+function futureWorkoutLifecycleFromRow(row: Record<string, unknown>): FutureWorkoutLifecycle {
+  return {
+    approvalStatus: String(row.approval_status) as FutureWorkoutLifecycle['approvalStatus'],
+    approvedAt: typeof row.approved_at === 'string' ? row.approved_at : null,
+    approvalNote: typeof row.approval_note === 'string' ? row.approval_note : null,
+    syncStatus: String(row.sync_status) as FutureWorkoutLifecycle['syncStatus'],
+    syncedAt: typeof row.synced_at === 'string' ? row.synced_at : null,
+    intervalsEventId: typeof row.intervals_event_id === 'string' ? row.intervals_event_id : null,
+    lastSyncError: typeof row.last_sync_error === 'string' ? row.last_sync_error : null,
+  };
+}
+
+function parseStoredFutureWorkout(row: Record<string, unknown>): FutureWorkoutProposal {
+  let proposal: FutureWorkoutProposal;
+  try {
+    proposal = JSON.parse(String(row.proposal_json)) as FutureWorkoutProposal;
+  } catch {
+    throw new Error(`Stored future workout ${String(row.pacer_workout_id)} has invalid proposal JSON.`);
+  }
+  return { ...proposal, lifecycle: futureWorkoutLifecycleFromRow(row) };
+}
+
+function futureWorkoutRevisions(db: SqliteDatabase, pacerWorkoutId: string): StoredFutureWorkoutRevision[] {
+  const rows = db.prepare(`
+    SELECT proposal_revision, action, proposal_json, recorded_at
+    FROM future_workout_revisions
+    WHERE pacer_workout_id = ?
+    ORDER BY id ASC
+  `).all(pacerWorkoutId) as Record<string, unknown>[];
+
+  return rows.map((row) => ({
+    revision: Number(row.proposal_revision),
+    action: String(row.action) as StoredFutureWorkoutRevision['action'],
+    proposal: JSON.parse(String(row.proposal_json)) as FutureWorkoutProposal,
+    recordedAt: String(row.recorded_at),
+  }));
+}
+
+function mapStoredFutureWorkout(db: SqliteDatabase, row: Record<string, unknown>): StoredFutureWorkout {
+  const pacerWorkoutId = String(row.pacer_workout_id);
+  return {
+    workout: parseStoredFutureWorkout(row),
+    createdAt: String(row.created_at),
+    storedAt: String(row.stored_at),
+    revisions: futureWorkoutRevisions(db, pacerWorkoutId),
+  };
+}
+
+function getStoredFutureWorkoutRow(db: SqliteDatabase, pacerWorkoutId: string): Record<string, unknown> | null {
+  return db.prepare(`
+    SELECT *
+    FROM future_workouts
+    WHERE pacer_workout_id = ?
+  `).get(pacerWorkoutId) as Record<string, unknown> | undefined ?? null;
+}
+
+function insertFutureWorkoutRevision(
+  db: SqliteDatabase,
+  workout: FutureWorkoutProposal,
+  action: StoredFutureWorkoutRevision['action'],
+  recordedAt: string,
+): void {
+  db.prepare(`
+    INSERT INTO future_workout_revisions (pacer_workout_id, proposal_revision, action, proposal_json, recorded_at)
+    VALUES (?, ?, ?, ?, ?)
+  `).run(workout.pacerWorkoutId, workout.proposalRevision, action, JSON.stringify(workout), recordedAt);
+}
+
+/**
+ * Imports are proposal-only. Revisions may replace only a still-unapproved,
+ * unsynchronized proposal with the same deterministic Pacer identity.
+ */
+export function importStoredFutureWorkout(workout: FutureWorkoutProposal): FutureWorkoutImportResult {
+  const db = getDatabase();
+  const operation = db.transaction((): FutureWorkoutImportResult['operation'] => {
+    const existingRow = getStoredFutureWorkoutRow(db, workout.pacerWorkoutId);
+    const now = new Date().toISOString();
+    const identityKey = futureWorkoutIdentityKey(workout);
+
+    if (!existingRow) {
+      db.prepare(`
+        INSERT INTO future_workouts (
+          pacer_workout_id, identity_key, proposal_key, proposal_revision,
+          source_activity_id, source_session_date, scheduled_local_date, timezone,
+          workout_type, title, coaching_notes, proposal_json,
+          approval_status, approved_at, approval_note, sync_status, synced_at,
+          intervals_event_id, last_sync_error, created_at, stored_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        workout.pacerWorkoutId, identityKey, workout.proposalKey, workout.proposalRevision,
+        workout.sourceSession.sourceActivityId, workout.sourceSession.sessionDate, workout.schedule.localDate, workout.schedule.timezone,
+        workout.workoutType, workout.title, workout.coachingNotes, JSON.stringify(workout),
+        workout.lifecycle.approvalStatus, workout.lifecycle.approvedAt, workout.lifecycle.approvalNote,
+        workout.lifecycle.syncStatus, workout.lifecycle.syncedAt, workout.lifecycle.intervalsEventId,
+        workout.lifecycle.lastSyncError, now, now,
+      );
+      insertFutureWorkoutRevision(db, workout, 'imported', now);
+      return 'created';
+    }
+
+    const existing = parseStoredFutureWorkout(existingRow);
+    if (futureWorkoutIdentityKey(existing) !== identityKey) {
+      throw new Error('Future workout identity conflict.');
+    }
+    if (workout.proposalRevision < existing.proposalRevision) {
+      throw new Error('Future workout proposal revision is older than the stored proposal.');
+    }
+    if (workout.proposalRevision === existing.proposalRevision) {
+      if (JSON.stringify(workout) !== JSON.stringify(existing)) {
+        throw new Error('Future workout proposal conflicts with the stored revision.');
+      }
+      return 'unchanged';
+    }
+    if (existing.lifecycle.approvalStatus !== 'proposed' || existing.lifecycle.syncStatus !== 'not_requested') {
+      throw new Error('An approved or synchronized future workout cannot be overwritten by import.');
+    }
+
+    db.prepare(`
+      UPDATE future_workouts
+      SET proposal_key = ?, proposal_revision = ?, source_activity_id = ?, source_session_date = ?,
+          scheduled_local_date = ?, timezone = ?, workout_type = ?, title = ?, coaching_notes = ?,
+          proposal_json = ?, stored_at = ?
+      WHERE pacer_workout_id = ?
+    `).run(
+      workout.proposalKey, workout.proposalRevision, workout.sourceSession.sourceActivityId, workout.sourceSession.sessionDate,
+      workout.schedule.localDate, workout.schedule.timezone, workout.workoutType, workout.title, workout.coachingNotes,
+      JSON.stringify(workout), now, workout.pacerWorkoutId,
+    );
+    insertFutureWorkoutRevision(db, workout, 'revised', now);
+    return 'revised';
+  })();
+
+  const stored = getStoredFutureWorkout(workout.pacerWorkoutId);
+  if (!stored) throw new Error(`Could not reload future workout ${workout.pacerWorkoutId}.`);
+  return { operation, stored };
+}
+
+export function getStoredFutureWorkout(pacerWorkoutId: string): StoredFutureWorkout | null {
+  const db = getDatabase();
+  const row = getStoredFutureWorkoutRow(db, pacerWorkoutId);
+  return row ? mapStoredFutureWorkout(db, row) : null;
+}
+
+export function listStoredFutureWorkouts(): StoredFutureWorkout[] {
+  const db = getDatabase();
+  const rows = db.prepare(`
+    SELECT *
+    FROM future_workouts
+    ORDER BY scheduled_local_date ASC, pacer_workout_id ASC
+  `).all() as Record<string, unknown>[];
+  return rows.map((row) => mapStoredFutureWorkout(db, row));
+}
+
+/** Explicit maintenance-only rename. It never changes identity, content, lifecycle, or history. */
+export function renameStoredSyncedFutureWorkout(input: StoredFutureWorkoutRenameInput): { applied: boolean; oldTitle: string; newTitle: string } {
+  const db = getDatabase();
+  const run = db.transaction(() => {
+    const row = getStoredFutureWorkoutRow(db, input.pacerWorkoutId);
+    if (!row) throw new Error('Future workout not found.');
+    const workout = parseStoredFutureWorkout(row);
+    if (workout.proposalKey !== input.proposalKey || workout.title !== input.expectedTitle || String(row.title) !== input.expectedTitle) {
+      throw new Error('Future workout title or proposal identity no longer matches the expected value.');
+    }
+    if (workout.lifecycle.approvalStatus !== 'approved' || workout.lifecycle.syncStatus !== 'synced' || workout.lifecycle.intervalsEventId !== input.expectedIntervalsEventId) {
+      throw new Error('Future workout is not the expected approved and synchronized event.');
+    }
+    if (!input.nextTitle.trim()) throw new Error('Future workout title is required.');
+    if (input.dryRun) return { applied: false, oldTitle: workout.title, newTitle: input.nextTitle.trim() };
+    // Keep proposal_json byte-for-byte equivalent except for title. Lifecycle is
+    // authoritative in columns and must not be normalized as a rename side effect.
+    const rawProposal = JSON.parse(String(row.proposal_json)) as FutureWorkoutProposal;
+    const renamed = { ...rawProposal, title: input.nextTitle.trim() };
+    const now = new Date().toISOString();
+    const result = db.prepare(`
+      UPDATE future_workouts SET title=?, proposal_json=?, stored_at=?
+      WHERE pacer_workout_id=? AND proposal_key=? AND title=?
+        AND approval_status='approved' AND sync_status='synced' AND intervals_event_id=?
+    `).run(renamed.title, JSON.stringify(renamed), now, input.pacerWorkoutId, input.proposalKey, input.expectedTitle, input.expectedIntervalsEventId);
+    if (result.changes !== 1) throw new Error('Future workout changed during rename; no update was applied.');
+    return { applied: true, oldTitle: workout.title, newTitle: renamed.title };
+  });
+  return run();
+}
+
+/** Explicit maintenance-only qualitative feedback update. Session core and laps are never touched. */
+export function updateStoredSessionFeedback(input: StoredSessionFeedbackUpdateInput): { applied: boolean; oldValue: StoredSessionFeedbackUpdateInput['expected']; newValue: StoredSessionFeedbackUpdateInput['next'] } {
+  const db = getDatabase();
+  const run = db.transaction(() => {
+    const row = db.prepare(`
+      SELECT s.id, s.source_activity_id, s.session_date, ai.signal_title, ai.signal_paragraphs_json, ai.carry_forward,
+        (SELECT COUNT(*) FROM session_laps WHERE session_id=s.id) AS lap_count
+      FROM sessions s JOIN session_ai ai ON ai.session_id=s.id WHERE s.id=?
+    `).get(input.sessionId) as Record<string, unknown> | undefined;
+    if (!row || Number(row.source_activity_id) !== input.sourceActivityId || String(row.session_date) !== input.sessionDate) {
+      throw new Error('Session identity no longer matches the expected session.');
+    }
+    if (Number(row.lap_count) !== input.expectedLapCount) throw new Error('Session lap count no longer matches the expected value.');
+    const oldValue = {
+      signalTitle: typeof row.signal_title === 'string' ? row.signal_title : '',
+      signalParagraphs: parseJsonArray(row.signal_paragraphs_json),
+      carryForward: typeof row.carry_forward === 'string' ? row.carry_forward : '',
+    };
+    if (JSON.stringify(oldValue) !== JSON.stringify(input.expected)) throw new Error('Qualitative feedback no longer matches the expected current value.');
+    const newValue = {
+      signalTitle: input.next.signalTitle.trim(),
+      signalParagraphs: input.next.signalParagraphs.map((paragraph) => paragraph.trim()).filter(Boolean),
+      carryForward: input.next.carryForward.trim(),
+    };
+    if (!newValue.signalTitle || !newValue.carryForward) throw new Error('Feedback title and carry-forward are required.');
+    if (input.dryRun) return { applied: false, oldValue, newValue };
+    const result = db.prepare(`
+      UPDATE session_ai SET signal_title=?, signal_paragraphs_json=?, carry_forward=?
+      WHERE session_id=? AND signal_title=? AND signal_paragraphs_json=? AND carry_forward=?
+    `).run(newValue.signalTitle, JSON.stringify(newValue.signalParagraphs), newValue.carryForward, input.sessionId,
+      oldValue.signalTitle || null, JSON.stringify(oldValue.signalParagraphs), oldValue.carryForward || null);
+    if (result.changes !== 1) throw new Error('Qualitative feedback changed during update; no update was applied.');
+    return { applied: true, oldValue, newValue };
+  });
+  return run();
+}
+
+/** Explicit maintenance-only next-run title update. It never changes the workout or session content. */
+export function updateStoredSessionNextRunTitle(input: StoredSessionNextRunTitleUpdateInput): { applied: boolean; oldTitle: string; newTitle: string } {
+  const db = getDatabase();
+  const run = db.transaction(() => {
+    const row = db.prepare(`
+      SELECT s.id, s.source_activity_id, s.session_date, ai.next_run_title,
+        (SELECT COUNT(*) FROM session_laps WHERE session_id=s.id) AS lap_count
+      FROM sessions s JOIN session_ai ai ON ai.session_id=s.id WHERE s.id=?
+    `).get(input.sessionId) as Record<string, unknown> | undefined;
+    if (!row || Number(row.source_activity_id) !== input.sourceActivityId || String(row.session_date) !== input.sessionDate) {
+      throw new Error('Session identity no longer matches the expected session.');
+    }
+    if (Number(row.lap_count) !== input.expectedLapCount) throw new Error('Session lap count no longer matches the expected value.');
+    const oldTitle = typeof row.next_run_title === 'string' ? row.next_run_title : '';
+    if (oldTitle !== input.expectedNextRunTitle) throw new Error('Next-run title no longer matches the expected current value.');
+    const newTitle = input.nextRunTitle.trim();
+    if (!newTitle) throw new Error('Next-run title is required.');
+    if (input.dryRun) return { applied: false, oldTitle, newTitle };
+    const result = db.prepare(`
+      UPDATE session_ai SET next_run_title=?
+      WHERE session_id=? AND next_run_title=?
+    `).run(newTitle, input.sessionId, oldTitle || null);
+    if (result.changes !== 1) throw new Error('Next-run title changed during update; no update was applied.');
+    return { applied: true, oldTitle, newTitle };
+  });
+  return run();
+}
+
+export function approveStoredFutureWorkout(pacerWorkoutId: string, approvalNote: string | null = null): StoredFutureWorkout {
+  const db = getDatabase();
+  db.transaction(() => {
+    const row = getStoredFutureWorkoutRow(db, pacerWorkoutId);
+    if (!row) throw new Error('Future workout not found.');
+    const existing = parseStoredFutureWorkout(row);
+    if (existing.lifecycle.approvalStatus === 'approved') return;
+    if (existing.lifecycle.approvalStatus !== 'proposed' || existing.lifecycle.syncStatus !== 'not_requested') {
+      throw new Error('Only an unsynchronized proposed future workout can be approved.');
+    }
+
+    const approvedAt = new Date().toISOString();
+    const approved: FutureWorkoutProposal = {
+      ...existing,
+      lifecycle: {
+        ...existing.lifecycle,
+        approvalStatus: 'approved',
+        approvedAt,
+        approvalNote,
+      },
+    };
+    db.prepare(`
+      UPDATE future_workouts
+      SET approval_status = 'approved', approved_at = ?, approval_note = ?, proposal_json = ?, stored_at = ?
+      WHERE pacer_workout_id = ?
+    `).run(approvedAt, approvalNote, JSON.stringify(approved), approvedAt, pacerWorkoutId);
+    insertFutureWorkoutRevision(db, approved, 'approved', approvedAt);
+  })();
+
+  const stored = getStoredFutureWorkout(pacerWorkoutId);
+  if (!stored) throw new Error(`Could not reload future workout ${pacerWorkoutId}.`);
+  return stored;
+}
+
+export function beginFutureWorkoutSync(pacerWorkoutId: string): StoredFutureWorkout {
+  const db = getDatabase();
+  db.transaction(() => {
+    const row = getStoredFutureWorkoutRow(db, pacerWorkoutId);
+    if (!row) throw new Error('Future workout not found.');
+    if (String(row.approval_status) !== 'approved') throw new Error('Only approved future workouts can synchronize.');
+    if (String(row.sync_status) === 'synced') return;
+    if (String(row.sync_status) === 'syncing') {
+      const attempted = Date.parse(String(row.sync_attempted_at ?? ''));
+      if (!Number.isFinite(attempted) || Date.now() - attempted < 60_000) {
+        throw new Error('Future workout synchronization is already in progress.');
+      }
+    }
+    const now = new Date().toISOString();
+    db.prepare(`UPDATE future_workouts SET sync_status='syncing', sync_attempted_at=?, last_sync_error=NULL, stored_at=? WHERE pacer_workout_id=?`).run(now, now, pacerWorkoutId);
+    db.prepare(`INSERT INTO future_workout_sync_attempts (pacer_workout_id,status,attempted_at) VALUES (?, 'syncing', ? )`).run(pacerWorkoutId, now);
+  })();
+  return getStoredFutureWorkout(pacerWorkoutId)!;
+}
+
+export function finishFutureWorkoutSync(pacerWorkoutId: string, eventId: string): StoredFutureWorkout {
+  const db = getDatabase(); const now = new Date().toISOString();
+  db.transaction(() => {
+    db.prepare(`UPDATE future_workouts SET sync_status='synced', synced_at=?, intervals_event_id=?, last_sync_error=NULL, stored_at=? WHERE pacer_workout_id=? AND approval_status='approved'`).run(now, eventId, now, pacerWorkoutId);
+    db.prepare(`INSERT INTO future_workout_sync_attempts (pacer_workout_id,status,remote_event_id,attempted_at) VALUES (?, 'synced', ?, ?)`).run(pacerWorkoutId,eventId,now);
+  })(); return getStoredFutureWorkout(pacerWorkoutId)!;
+}
+
+export function failFutureWorkoutSync(pacerWorkoutId: string, error: string): StoredFutureWorkout {
+  const db=getDatabase(), now=new Date().toISOString();
+  db.transaction(() => { db.prepare(`UPDATE future_workouts SET sync_status='failed', last_sync_error=?, stored_at=? WHERE pacer_workout_id=?`).run(error.slice(0,1000),now,pacerWorkoutId); db.prepare(`INSERT INTO future_workout_sync_attempts (pacer_workout_id,status,error,attempted_at) VALUES (?, 'failed', ?, ?)`).run(pacerWorkoutId,error.slice(0,1000),now); })();
+  return getStoredFutureWorkout(pacerWorkoutId)!;
+}
+
+export function hasConflictingSyncedFutureWorkout(workout: FutureWorkoutProposal): boolean {
+  const db=getDatabase(); return Boolean(db.prepare(`SELECT 1 FROM future_workouts WHERE proposal_key=? AND source_activity_id=? AND source_session_date=? AND pacer_workout_id<>? AND sync_status='synced' LIMIT 1`).get(workout.proposalKey,workout.sourceSession.sourceActivityId,workout.sourceSession.sessionDate,workout.pacerWorkoutId));
 }

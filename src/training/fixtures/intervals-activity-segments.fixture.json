@@ -1,0 +1,51 @@
+{
+  "id": 197534935,
+  "name": "Strides",
+  "icu_intervals": [
+    {
+      "id": 8533964,
+      "type": "RECOVERY",
+      "start_index": 0,
+      "end_index": 0,
+      "start_time": 0,
+      "end_time": 0,
+      "moving_time": 2,
+      "elapsed_time": 2,
+      "distance": null,
+      "average_speed": null,
+      "average_heartrate": null
+    },
+    {
+      "id": 7204146,
+      "type": "WORK",
+      "start_index": 336,
+      "end_index": 342,
+      "start_time": 1040,
+      "end_time": 1060,
+      "moving_time": 20,
+      "elapsed_time": 20,
+      "distance": 72.13013,
+      "average_speed": 3.6065063,
+      "average_heartrate": 146
+    },
+    {
+      "id": 4887492,
+      "type": "WORK",
+      "start_index": 342,
+      "end_index": 360,
+      "start_time": 1060,
+      "end_time": 1158,
+      "moving_time": 100,
+      "elapsed_time": 100,
+      "distance": 218.72998,
+      "average_speed": 2.1872997,
+      "average_heartrate": 146
+    },
+    null,
+    {
+      "type": "WORK",
+      "start_time": "bad",
+      "average_speed": 0
+    }
+  ]
+}

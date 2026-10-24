@@ -15,15 +15,19 @@
     "sessions:seed": "ts-node --transpile-only src/session/seed-cli.ts",
     "sessions:seed:prod": "node dist/session/seed-cli.js",
     "test:session-enrichment": "ts-node --transpile-only src/session/enrichment-regression-cli.ts",
+    "test:editor-identity": "ts-node --transpile-only src/session/editor-identity-regression-cli.ts",
+    "test:race-matching": "ts-node --transpile-only src/races/service-regression-cli.ts",
     "training:fetch": "ts-node --transpile-only src/training/fetch-cli.ts",
     "training:fetch:prod": "node dist/training/fetch-cli.js",
     "intervals:smoke": "ts-node --transpile-only src/training/intervals-smoke-cli.ts",
+    "test:coachat-unified": "ts-node --transpile-only src/coachat/unified-regression-cli.ts",
     "auth:garmin": "ts-node --transpile-only src/auth/login.ts garmin",
     "capture": "ts-node --transpile-only src/capture/runner.ts"
   },
   "dependencies": {
     "better-sqlite3": "^12.8.0",
-    "dotenv": "^16.4.5"
+    "dotenv": "^16.4.5",
+    "fit-file-parser": "6.2.2"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",

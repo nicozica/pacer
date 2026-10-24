@@ -8,6 +8,8 @@ import { getEditorBootstrap, publishSnapshots, saveSession } from '../session/se
 import { deployRunSite } from '../session/deploy';
 import { SaveSessionInput } from '../session/types';
 import { createRace, deleteRace, listRaces, RaceInput, updateRace } from '../races/service';
+import { approveFutureWorkout, getFutureWorkout, importFutureWorkout, listFutureWorkouts, synchronizeFutureWorkout } from '../workouts/service';
+import { validateUnifiedCoachatImport } from '../coachat/service';
 
 const WEB_DIR = path.resolve(process.cwd(), 'web');
 
@@ -189,6 +191,68 @@ const server = http.createServer(async (req, res) => {
     const publishStatus = await deployRunSite();
     sendJson(res, publishStatus.ok ? 200 : 500, { ok: publishStatus.ok, publishStatus });
     return;
+  }
+
+  // Private Pacer-admin API. These routes are intentionally separate from
+  // session saving/publishing and never contact Intervals.icu or Garmin.
+  if (url === '/api/workouts' && method === 'GET') {
+    try {
+      sendJson(res, 200, { proposals: listFutureWorkouts() });
+    } catch (err) {
+      sendJson(res, 500, { error: (err as Error).message });
+    }
+    return;
+  }
+
+  if (url === '/api/workouts/import' && method === 'POST') {
+    try {
+      const result = importFutureWorkout(await readJsonBody<unknown>(req));
+      sendJson(res, result.operation === 'created' ? 201 : 200, result);
+    } catch (err) {
+      const message = (err as Error).message;
+      const status = /conflict|older|cannot be overwritten/i.test(message) ? 409 : 400;
+      sendJson(res, status, { error: message });
+    }
+    return;
+  }
+
+  if (url === '/api/coachat/validate' && method === 'POST') {
+    try { sendJson(res, 200, validateUnifiedCoachatImport(await readJsonBody<unknown>(req))); }
+    catch (err) { sendJson(res, 400, { error: (err as Error).message }); }
+    return;
+  }
+
+  const workoutMatch = url.match(/^\/api\/workouts\/([^/]+)(?:\/(approve|sync))?$/);
+  if (workoutMatch) {
+    const pacerWorkoutId = decodeURIComponent(workoutMatch[1]);
+    const action = workoutMatch[2];
+    if (!action && method === 'GET') {
+      try {
+        const proposal = getFutureWorkout(pacerWorkoutId);
+        if (!proposal) {
+          sendJson(res, 404, { error: 'Future workout not found.' });
+        } else {
+          sendJson(res, 200, { proposal });
+        }
+      } catch (err) {
+        sendJson(res, 500, { error: (err as Error).message });
+      }
+      return;
+    }
+    if (action === 'approve' && method === 'POST') {
+      try {
+        sendJson(res, 200, { proposal: approveFutureWorkout(pacerWorkoutId, await readJsonBody<unknown>(req)) });
+      } catch (err) {
+        const message = (err as Error).message;
+        sendJson(res, /not found/i.test(message) ? 404 : 409, { error: message });
+      }
+      return;
+    }
+    if (action === 'sync' && method === 'POST') {
+      try { sendJson(res, 200, { proposal: await synchronizeFutureWorkout(pacerWorkoutId) }); }
+      catch (err) { sendJson(res, 409, { error: (err as Error).message }); }
+      return;
+    }
   }
 
   if (url.startsWith('/api/races/') && (method === 'PUT' || method === 'DELETE')) {

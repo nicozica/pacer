@@ -1,0 +1,23 @@
+{
+  "id": 123,
+  "category": "WORKOUT",
+  "type": "Run",
+  "name": "2 × 1 km",
+  "start_date_local": "2026-10-25T00:00:00",
+  "external_id": "pacer:pacer-fw1-fixture",
+  "description": "- Warm up 10m 7:00-7:20/km Pace intensity=warmup\n\nControlled reps 2x\n- Fast 1km 4:10-4:20/km Pace intensity=active\n- Jog recover 2m 5:30-6:00/km Pace intensity=recovery\n\n- Cool down 10m intensity=cooldown",
+  "workout_doc": {
+    "steps": [
+      { "text": "Warm up", "intensity": "warmup", "duration": 600, "pace": { "start": 420, "end": 440, "units": "secs/km" } },
+      {
+        "text": "Controlled reps 2x",
+        "reps": 2,
+        "steps": [
+          { "text": "Fast", "intensity": "active", "distance": 1000, "pace": { "start": 250, "end": 260, "units": "secs/km" } },
+          { "text": "Jog recover", "intensity": "recovery", "duration": 120, "pace": { "start": 330, "end": 360, "units": "secs/km" } }
+        ]
+      },
+      { "text": "Cool down", "intensity": "cooldown", "duration": 600 }
+    ]
+  }
+}

@@ -1,5 +1,5 @@
 import { config } from '../config';
-import type { SourceActivity, SourceLap, SourceStreamPayload } from '../session/source';
+import type { SourceActivity, SourceGarminDeviceLap, SourceLap, SourceStreamPayload } from '../session/source';
 import { createIntervalsSource } from './intervals-source';
 
 export type TrainingSourceName = 'intervals';
@@ -17,6 +17,7 @@ export interface TrainingSource {
   fetchWellness?(options?: TrainingFetchOptions): Promise<unknown[]>;
   fetchActivityDetail?(sourceActivityId: number): Promise<SourceActivity | null>;
   fetchActivityLaps?(sourceActivityId: number): Promise<SourceLap[]>;
+  fetchActivityGarminDeviceLaps?(sourceActivityId: number): Promise<SourceGarminDeviceLap[] | null>;
   fetchActivityStreams?(sourceActivityId: number): Promise<SourceStreamPayload | null>;
 }
 
