@@ -120,9 +120,10 @@ storage/
 
 ---
 
-## Production deploy (Pipita)
+## Production deploy (Pipa)
 
-For a release-based rsync workflow (`dist/` artifact, `current` symlink, rollback, and external secrets/storage),
-see:
+Pacer runs privately on Pipa (`raspberrypi`) as the user systemd service `pacer.service`.
+The public Astro site runs separately on Pipita (`pizero`) as `run.nico.ar`.
+For the Pipa backend build, restart, health check, and safety notes, see:
 
-`docs/pipita-production-flow.md`
+`docs/pipa-production-flow.md`

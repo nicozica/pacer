@@ -13,5 +13,9 @@ storage/logs/*
 storage/locks/*
 !storage/**/.gitkeep
 
+# Verified local SQLite recovery points are production data, never Git content.
+storage/recovery/*
+!storage/recovery/.gitkeep
+
 # Deployment artifacts and local rollback data
 .deploy/
