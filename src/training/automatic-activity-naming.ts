@@ -7,6 +7,7 @@ import type { FutureWorkoutProposal } from '../workouts/types';
 import {
   createIntervalsCompletedActivityClient,
   planCompletedActivityRename,
+  planNullPairedEventActivityRename,
   renameCompletedIntervalsActivity,
   type IntervalsCompletedActivityClient,
   type IntervalsCompletedActivitySnapshot,
@@ -15,6 +16,8 @@ import {
 
 /** Explicit production cutover; automatic naming never considers earlier activities. */
 export const AUTOMATIC_ACTIVITY_NAMING_NOT_BEFORE = '2026-10-23';
+/** The null-pair fallback is newer and must never backfill activities before this date. */
+export const NULL_PAIR_FALLBACK_NOT_BEFORE = '2026-10-26';
 const activeActivityIds = new Set<number>();
 
 interface NamingState { failedActivityIds: number[]; }
@@ -47,7 +50,9 @@ function writeState(state: NamingState): void {
 function readSyncedFutureWorkouts(): StoredPlannedWorkoutForActivityRename[] {
   const db = new Database(config.databaseFile, { readonly: true, fileMustExist: true });
   try {
-    return (db.prepare(`SELECT proposal_json, approval_status, approved_at, approval_note, sync_status, synced_at, intervals_event_id, last_sync_error FROM future_workouts WHERE approval_status='approved' AND sync_status='synced'`).all() as Array<Record<string, unknown>>).map((row) => {
+    return (db.prepare(`SELECT fw.proposal_json, fw.approval_status, fw.approved_at, fw.approval_note, fw.sync_status, fw.synced_at, fw.intervals_event_id, fw.last_sync_error,
+      EXISTS(SELECT 1 FROM future_workout_skips s WHERE s.pacer_workout_id=fw.pacer_workout_id) AS skipped
+      FROM future_workouts fw WHERE fw.approval_status='approved' AND fw.sync_status='synced'`).all() as Array<Record<string, unknown>>).map((row) => {
       const proposal = JSON.parse(String(row.proposal_json)) as FutureWorkoutProposal;
       return { workout: { ...proposal, lifecycle: {
         approvalStatus: String(row.approval_status) as FutureWorkoutProposal['lifecycle']['approvalStatus'],
@@ -57,7 +62,7 @@ function readSyncedFutureWorkouts(): StoredPlannedWorkoutForActivityRename[] {
         syncedAt: typeof row.synced_at === 'string' ? row.synced_at : null,
         intervalsEventId: typeof row.intervals_event_id === 'string' ? row.intervals_event_id : null,
         lastSyncError: typeof row.last_sync_error === 'string' ? row.last_sync_error : null,
-      } } };
+      } }, skipped: Number(row.skipped) === 1 };
     });
   } finally { db.close(); }
 }
@@ -77,16 +82,29 @@ export async function processAutomaticActivityNaming(
     activeActivityIds.add(activityId);
     try {
       const snapshot = await client.get(activityId);
-      const candidates = workouts.filter(({ workout }) => String(workout.lifecycle.intervalsEventId) === String(snapshot.paired_event_id));
-      const selected = candidates.length === 1 ? candidates[0].workout : null;
-      const plan = selected ? planCompletedActivityRename(snapshot, workouts, {
+      const activeWorkouts = workouts.filter(({ skipped }) => !skipped);
+      const candidates = activeWorkouts.filter(({ workout }) => String(workout.lifecycle.intervalsEventId) === String(snapshot.paired_event_id));
+      const pairedSelected = candidates.length === 1 ? candidates[0].workout : null;
+      const fallbackCandidates = snapshot.paired_event_id === null && date >= NULL_PAIR_FALLBACK_NOT_BEFORE
+        ? activeWorkouts.filter(({ workout }) => workout.schedule.localDate === date
+          && workout.lifecycle.approvalStatus === 'approved' && workout.lifecycle.syncStatus === 'synced' && Boolean(workout.lifecycle.intervalsEventId))
+        : [];
+      const fallbackSelected = fallbackCandidates.length === 1 ? fallbackCandidates[0].workout : null;
+      const selected = pairedSelected ?? fallbackSelected;
+      const input = selected ? {
         activityId, plannedWorkoutId: selected.pacerWorkoutId, expectedActivityTitle: snapshot.name,
-        notBeforeLocalDate: AUTOMATIC_ACTIVITY_NAMING_NOT_BEFORE,
-      }) : null;
-      if (!plan) { outcomes.push({ activityId, outcome: 'skipped', reason: 'paired_event_id is missing, unmatched, or ambiguous' }); continue; }
+        notBeforeLocalDate: pairedSelected ? AUTOMATIC_ACTIVITY_NAMING_NOT_BEFORE : NULL_PAIR_FALLBACK_NOT_BEFORE,
+        ...(pairedSelected ? {} : { nullPairFallbackActivities: activities }),
+      } : null;
+      const plan = input
+        ? pairedSelected
+          ? planCompletedActivityRename(snapshot, activeWorkouts, input)
+          : planNullPairedEventActivityRename(snapshot, activeWorkouts, input, activities)
+        : null;
+      if (!plan || !input) { outcomes.push({ activityId, outcome: 'skipped', reason: snapshot.paired_event_id === null && date < NULL_PAIR_FALLBACK_NOT_BEFORE ? `null paired_event_id fallback starts on ${NULL_PAIR_FALLBACK_NOT_BEFORE}` : snapshot.paired_event_id === null ? 'null paired_event_id fallback has no unique approved, synced Pacer workout on this date' : 'paired_event_id is missing, unmatched, or ambiguous' }); continue; }
       if (plan.decision === 'already_correct') { outcomes.push({ activityId, outcome: 'already_correct', reason: plan.reason }); continue; }
       if (!plan.eligible) { outcomes.push({ activityId, outcome: 'skipped', reason: plan.reason }); continue; }
-      await renameCompletedIntervalsActivity({ activityId, plannedWorkoutId: selected!.pacerWorkoutId, expectedActivityTitle: snapshot.name, notBeforeLocalDate: AUTOMATIC_ACTIVITY_NAMING_NOT_BEFORE }, workouts, client);
+      await renameCompletedIntervalsActivity(input, activeWorkouts, client);
       outcomes.push({ activityId, outcome: 'renamed', reason: plan.reason });
     } catch (error) {
       failedActivityIds.add(activityId);

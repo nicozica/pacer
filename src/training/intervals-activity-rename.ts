@@ -1,4 +1,5 @@
 import { config } from '../config';
+import type { SourceActivity } from '../session/source';
 import type { FutureWorkoutProposal } from '../workouts/types';
 
 /** The small subset required for a name-only completed-activity update. */
@@ -9,6 +10,7 @@ export interface IntervalsCompletedActivitySnapshot {
   start_date_local: string;
   paired_event_id?: string | number | null;
   strava_id?: string | number | null;
+  moving_time?: number | null;
   source?: string | null;
   [key: string]: unknown;
 }
@@ -20,6 +22,8 @@ export interface IntervalsCompletedActivityClient {
 
 export interface StoredPlannedWorkoutForActivityRename {
   workout: FutureWorkoutProposal;
+  /** A skipped plan is historical context, never a candidate for automatic activity naming. */
+  skipped?: boolean;
 }
 
 export type ActivityRenameDecision =
@@ -35,7 +39,14 @@ export type ActivityRenameDecision =
   | 'paired_event_mismatch'
   | 'missing_strava_link'
   | 'expected_activity_title_mismatch'
-  | 'custom_activity_title';
+  | 'custom_activity_title'
+  | 'fallback_requires_null_pair'
+  | 'fallback_planned_workout_ambiguous'
+  | 'fallback_activity_ambiguous'
+  | 'fallback_activity_date_mismatch'
+  | 'fallback_duration_incompatible'
+  | 'fallback_competing_pair'
+  | 'fallback_title_not_generated';
 
 export interface CompletedActivityRenamePlan {
   decision: ActivityRenameDecision;
@@ -56,12 +67,16 @@ export interface CompletedActivityRenameInput {
   notBeforeLocalDate: string;
   /** Manual, selected-activity exception only; never supplied by automated execution. */
   allowCustomTitle?: boolean;
+  /** Internal automatic-only evidence for a strictly null-pair fallback. */
+  nullPairFallbackActivities?: SourceActivity[];
   dryRun?: boolean;
 }
 
 const RUN_TYPES = new Set(['run', 'trailrun', 'virtualrun']);
 const GENERIC_RUN_TITLES = new Set(['run', 'running', 'morning run', 'afternoon run', 'evening run', 'night run', 'lunch run']);
 const DEMONSTRATED_GENERATED_CITY_PREFIX = 'Buenos Aires City - ';
+/** A calendar workout is date-only; a completed run must finish within 20% of its fully timed plan. */
+export const NULL_PAIR_FALLBACK_DURATION_TOLERANCE = 0.20;
 
 function numericId(value: unknown): number | null {
   const text = typeof value === 'string' ? value.trim().replace(/^i/i, '') : value;
@@ -75,6 +90,43 @@ function localDate(value: string): string | null {
 
 function normalizedSport(value: string): string {
   return value.replace(/[\s_-]+/g, '').toLowerCase();
+}
+
+function sourceActivityId(activity: SourceActivity): number | null {
+  return numericId(activity.sourceActivityId ?? activity.id);
+}
+
+function sourceActivityDate(activity: SourceActivity): string | null {
+  return localDate(activity.start_date_local || activity.start_date);
+}
+
+function isRunningSourceActivity(activity: SourceActivity): boolean {
+  return RUN_TYPES.has(normalizedSport(activity.sport_type || activity.type));
+}
+
+/** Returns null unless every planned step has an exact time duration. */
+export function fullyTimedPlannedDurationSeconds(workout: FutureWorkoutProposal): number | null {
+  let total = 0;
+  for (const block of workout.blocks) {
+    if (block.kind === 'repeat') {
+      let repeated = 0;
+      for (const step of block.steps) {
+        if (step.duration.unit !== 'time') return null;
+        repeated += step.duration.seconds;
+      }
+      total += repeated * block.repetitions;
+      continue;
+    }
+    if (block.duration.unit !== 'time') return null;
+    total += block.duration.seconds;
+  }
+  return total > 0 ? total : null;
+}
+
+function snapshotMovingTime(activity: IntervalsCompletedActivitySnapshot): number | null {
+  return typeof activity.moving_time === 'number' && Number.isFinite(activity.moving_time) && activity.moving_time > 0
+    ? activity.moving_time
+    : null;
 }
 
 function plan(decision: ActivityRenameDecision, activity: IntervalsCompletedActivitySnapshot | null, workout: FutureWorkoutProposal | null, reason: string): CompletedActivityRenamePlan {
@@ -134,6 +186,59 @@ export function planCompletedActivityRename(
       : 'paired_event_id uniquely matches the approved, synced Pacer workout and the title is generic.');
 }
 
+/**
+ * This is intentionally narrower than the paired-event route. It never accepts
+ * generic titles: the exact demonstrated generated-title pattern is the proof
+ * that lets a null pairing be treated as a recoverable Intervals omission.
+ */
+export function planNullPairedEventActivityRename(
+  activity: IntervalsCompletedActivitySnapshot | null,
+  workouts: StoredPlannedWorkoutForActivityRename[],
+  input: CompletedActivityRenameInput,
+  activities: SourceActivity[],
+): CompletedActivityRenamePlan {
+  if (!activity || numericId(activity.id) !== input.activityId) return plan('activity_not_found', null, null, 'The fetched activity does not match the selected activity ID.');
+  const selected = workouts.filter(({ workout }) => workout.pacerWorkoutId === input.plannedWorkoutId);
+  if (selected.length !== 1) return plan('fallback_planned_workout_ambiguous', activity, null, 'The selected stored Pacer workout was not found exactly once.');
+  const workout = selected[0].workout;
+  if (!RUN_TYPES.has(normalizedSport(activity.type))) return plan('not_running', activity, workout, 'Only completed running activities are eligible.');
+  const date = localDate(activity.start_date_local);
+  if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(input.notBeforeLocalDate) || date < input.notBeforeLocalDate) {
+    return plan('historical_activity', activity, workout, 'The activity predates the explicit naming cut-over date.');
+  }
+  if (workout.lifecycle.approvalStatus !== 'approved' || workout.lifecycle.syncStatus !== 'synced' || !workout.lifecycle.intervalsEventId) {
+    return plan('planned_workout_not_synced', activity, workout, 'The selected Pacer workout is not an approved, synced calendar workout.');
+  }
+  if (activity.paired_event_id !== null) return plan('fallback_requires_null_pair', activity, workout, 'The fallback only applies when Intervals explicitly reports paired_event_id as null.');
+  if (workout.schedule.localDate !== date) return plan('fallback_activity_date_mismatch', activity, workout, 'The activity and planned workout do not share the athlete-local calendar date.');
+  const plannedOnDate = workouts.filter(({ workout: candidate }) => candidate.lifecycle.approvalStatus === 'approved'
+    && candidate.lifecycle.syncStatus === 'synced' && Boolean(candidate.lifecycle.intervalsEventId) && candidate.schedule.localDate === date);
+  if (plannedOnDate.length !== 1 || plannedOnDate[0].workout.pacerWorkoutId !== workout.pacerWorkoutId) {
+    return plan('fallback_planned_workout_ambiguous', activity, workout, 'The activity date does not have exactly one approved, synced Pacer Run workout.');
+  }
+  const runsOnDate = activities.filter((candidate) => isRunningSourceActivity(candidate) && sourceActivityDate(candidate) === date);
+  if (runsOnDate.length !== 1 || sourceActivityId(runsOnDate[0]) !== input.activityId) {
+    return plan('fallback_activity_ambiguous', activity, workout, 'The activity date does not have exactly one completed Run activity.');
+  }
+  const competingPair = activities.some((candidate) => sourceActivityId(candidate) !== input.activityId
+    && String(candidate.pairedEventId ?? '') === String(workout.lifecycle.intervalsEventId));
+  if (competingPair) return plan('fallback_competing_pair', activity, workout, 'Another completed activity is already paired to this planned event.');
+  if (activity.strava_id === undefined || activity.strava_id === null || String(activity.strava_id).trim() === '') {
+    return plan('missing_strava_link', activity, workout, 'Intervals does not expose a linked Strava activity ID, so duplicate safety cannot be established.');
+  }
+  if (activity.name !== input.expectedActivityTitle) return plan('expected_activity_title_mismatch', activity, workout, 'The activity title no longer matches the explicit expected current title.');
+  if (activity.name === workout.title) return plan('already_correct', activity, workout, 'The activity already has the exact planned workout title.');
+  if (activity.name !== `${DEMONSTRATED_GENERATED_CITY_PREFIX}${workout.title}`) {
+    return plan('fallback_title_not_generated', activity, workout, 'The null-pair fallback requires the exact demonstrated generated city-prefix title; generic and custom titles are excluded.');
+  }
+  const plannedDuration = fullyTimedPlannedDurationSeconds(workout);
+  const actualDuration = snapshotMovingTime(activity);
+  if (!plannedDuration || !actualDuration || Math.abs(actualDuration - plannedDuration) / plannedDuration > NULL_PAIR_FALLBACK_DURATION_TOLERANCE) {
+    return plan('fallback_duration_incompatible', activity, workout, 'The planned and actual moving durations are unavailable or differ by more than 20%.');
+  }
+  return plan('eligible', activity, workout, 'paired_event_id is explicitly null, but a unique same-day Pacer Run, exact generated title, linked Strava activity, and compatible duration provide guarded fallback evidence.');
+}
+
 function authHeader(): string {
   if (!config.intervalsApiKey) throw new Error('INTERVALS_API_KEY is required for Intervals activity maintenance.');
   return `Basic ${Buffer.from(`API_KEY:${config.intervalsApiKey}`).toString('base64')}`;
@@ -160,7 +265,9 @@ export async function renameCompletedIntervalsActivity(
   client: IntervalsCompletedActivityClient,
 ): Promise<{ applied: boolean; before: IntervalsCompletedActivitySnapshot; after: IntervalsCompletedActivitySnapshot | null; plan: CompletedActivityRenamePlan }> {
   const before = await client.get(input.activityId);
-  const beforePlan = planCompletedActivityRename(before, workouts, input);
+  const beforePlan = input.nullPairFallbackActivities
+    ? planNullPairedEventActivityRename(before, workouts, input, input.nullPairFallbackActivities)
+    : planCompletedActivityRename(before, workouts, input);
   if (beforePlan.decision === 'already_correct') return { applied: false, before, after: null, plan: beforePlan };
   if (input.dryRun) return { applied: false, before, after: null, plan: beforePlan };
   if (!beforePlan.eligible) throw new Error(`Completed activity rename refused: ${beforePlan.reason}`);
