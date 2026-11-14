@@ -13,6 +13,12 @@ storage/logs/*
 storage/locks/*
 !storage/**/.gitkeep
 
+# Root-level legacy/runtime SQLite files and their WAL/SHM sidecars.
+storage/*.db
+storage/*.db-*
+storage/*.sqlite
+storage/*.sqlite-*
+
 # Verified local SQLite recovery points are production data, never Git content.
 storage/recovery/*
 !storage/recovery/.gitkeep
