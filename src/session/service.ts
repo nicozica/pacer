@@ -69,6 +69,8 @@ import { CANONICAL_SESSION_TYPES, buildActivityNameMetadata, normalizeSessionTyp
 import { validateSessionAiIdentity } from './identity';
 import { findMatchingRace, listRaces } from '../races/service';
 import { estimateFutureWorkoutDistanceKm } from '../workouts/distance';
+import { formatFutureWorkoutStructure } from '../workouts/preview';
+import type { FutureWorkoutProposal } from '../workouts/types';
 
 const DAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const SESSION_TYPES: Set<string> = new Set(CANONICAL_SESSION_TYPES);
@@ -841,6 +843,79 @@ function buildNextRunExport(session: StoredSession): SessionExportNextRun | null
     ...(workout ? { workout } : {}),
     updatedAt: session.core.updatedAt,
   };
+}
+
+function publicWorkoutDurationMinutes(workout: FutureWorkoutProposal): number | null {
+  let seconds = 0;
+  for (const block of workout.blocks) {
+    if (block.kind === 'repeat') {
+      for (const step of block.steps) {
+        if (step.duration.unit !== 'time') return null;
+        seconds += step.duration.seconds * block.repetitions;
+      }
+    } else {
+      if (block.duration.unit !== 'time') return null;
+      seconds += block.duration.seconds;
+    }
+  }
+  return seconds > 0 ? Math.round(seconds / 60) : null;
+}
+
+function publicWorkoutPaceRange(workout: FutureWorkoutProposal): { min: number | null; max: number | null } {
+  const steps = workout.blocks.flatMap((block) => block.kind === 'repeat' ? block.steps : [block]);
+  const targets = steps.flatMap((step) => step.target.kind === 'pace' ? [step.target] : []);
+  return targets.length
+    ? { min: Math.min(...targets.map((target) => target.minSecPerKm)), max: Math.max(...targets.map((target) => target.maxSecPerKm)) }
+    : { min: null, max: null };
+}
+
+/** The same eligibility rules as the global home-screen Next workout, without selected-session actions. */
+function selectPublicNextWorkout(workouts: ReturnType<typeof listStoredFutureWorkouts>, today: string): FutureWorkoutProposal | null {
+  return workouts
+    .filter(({ workout, skip }) => !skip
+      && workout.lifecycle.approvalStatus === 'approved'
+      && workout.lifecycle.syncStatus === 'synced'
+      && workout.schedule.localDate >= today)
+    .sort((left, right) => left.workout.schedule.localDate.localeCompare(right.workout.schedule.localDate)
+      || right.workout.proposalRevision - left.workout.proposalRevision
+      || left.workout.pacerWorkoutId.localeCompare(right.workout.pacerWorkoutId))[0]?.workout ?? null;
+}
+
+function localToday(timeZone: string): string {
+  try {
+    return new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+  } catch { return new Date().toISOString().slice(0, 10); }
+}
+
+/** Rewrites only the public next-run snapshot; completed-session exports and historical metrics are untouched. */
+export function refreshPublicNextRunSnapshot(expectedWorkoutId?: string): SessionExportNextRun {
+  initSessionStore();
+  const publishedSessions = listPublishedSessions();
+  const latestSession = publishedSessions[0];
+  if (!latestSession) throw new Error('A published completed session is required before refreshing the public Next Run.');
+  const workouts = listStoredFutureWorkouts();
+  const timezone = workouts[0]?.workout.schedule.timezone ?? 'UTC';
+  const workout = selectPublicNextWorkout(workouts, localToday(timezone));
+  if (!workout) throw new Error('No eligible approved and synchronized future workout is available for public Next Run.');
+  if (expectedWorkoutId && workout.pacerWorkoutId !== expectedWorkoutId) throw new Error('Only the current eligible Next workout can be published.');
+  const durationMin = publicWorkoutDurationMinutes(workout);
+  const pace = publicWorkoutPaceRange(workout);
+  const nextRun: SessionExportNextRun = {
+    fromSessionId: latestSession.core.id,
+    sessionDate: latestSession.core.sessionDate,
+    title: workout.title,
+    summary: `${workout.workoutType} planned next.`,
+    type: workout.workoutType,
+    durationMin,
+    durationMax: durationMin,
+    distanceKm: estimateFutureWorkoutDistanceKm(workout.blocks),
+    paceMinSecPerKm: pace.min,
+    paceMaxSecPerKm: pace.max,
+    workout: { title: workout.title, type: workout.workoutType, blocks: formatFutureWorkoutStructure(workout.blocks) },
+    updatedAt: workout.updatedAt,
+  };
+  writeJsonFile('next-run.json', nextRun);
+  return nextRun;
 }
 
 function buildArchiveList(sessions: StoredSession[]): SessionExportArchiveList {

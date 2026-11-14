@@ -208,6 +208,10 @@ function getWellnessContextPath(sourceActivityId: number): string {
   return path.join(config.storageDir, 'json', 'wellness', `${sourceActivityId}.json`);
 }
 
+function getWellnessDateContextPath(sessionDate: string): string {
+  return path.join(config.storageDir, 'json', 'wellness-by-date', `${sessionDate}.json`);
+}
+
 function parseIsoTimestamp(isoString: string): number {
   if (!isoString) return NaN;
   const hasTimezone = /[zZ]|[+-]\d{2}:\d{2}$/.test(isoString);
@@ -375,6 +379,23 @@ function writeCachedWellnessContext(sourceActivityId: number, context: SourceWel
   fs.writeFileSync(filePath, JSON.stringify(context, null, 2));
 }
 
+function readCachedWellnessDateContext(sessionDate: string): SourceWellnessContext | null {
+  const filePath = getWellnessDateContextPath(sessionDate);
+  if (!fs.existsSync(filePath)) return null;
+  try {
+    const parsed = JSON.parse(fs.readFileSync(filePath, 'utf8')) as SourceWellnessContext;
+    return parsed?.provenance === 'intervals_athlete_wellness' && parsed.sessionDate === sessionDate ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeCachedWellnessDateContext(context: SourceWellnessContext): void {
+  const filePath = getWellnessDateContextPath(context.sessionDate);
+  ensureDir(path.dirname(filePath));
+  fs.writeFileSync(filePath, JSON.stringify(context, null, 2));
+}
+
 function shiftIsoDate(date: string, days: number): string {
   const timestamp = Date.parse(`${date}T12:00:00Z`);
   if (Number.isNaN(timestamp)) return date;
@@ -406,6 +427,31 @@ async function fetchWellnessContext(
   } catch {
     // A temporary API failure must not erase a previously useful local record.
     return cached?.sessionDate === sessionDate ? attachGarmin(cached) : null;
+  }
+}
+
+/**
+ * Loads wellness for a calendar date without requiring a completed activity.
+ * Intervals data is cached by date; Garmin retains its own date-keyed cache.
+ */
+export async function getWellnessContextForDate(bundleSource: string | null, sessionDate: string): Promise<SourceWellnessContext | null> {
+  const cached = readCachedWellnessDateContext(sessionDate);
+  const attachGarmin = async (intervals: SourceWellnessContext): Promise<SourceWellnessContext> => {
+    if (!config.garminWellnessEnabled) return intervals;
+    return { ...intervals, garmin: await getGarminWellnessContext({ sessionDate, storageDir: config.storageDir }) };
+  };
+  if (cached && isWellnessCacheFresh(sessionDate, cached.fetchedAt)) return attachGarmin(cached);
+  const source = createTrainingSource(getTrainingSourceForBundle(bundleSource ?? 'intervals-api'));
+  if (!source.fetchWellness) return cached ? attachGarmin(cached) : null;
+  try {
+    const context = buildIntervalsWellnessContext(sessionDate, await source.fetchWellness({
+      oldest: shiftIsoDate(sessionDate, -6),
+      newest: sessionDate,
+    }));
+    writeCachedWellnessDateContext(context);
+    return attachGarmin(context);
+  } catch {
+    return cached ? attachGarmin(cached) : null;
   }
 }
 

@@ -27,12 +27,17 @@ function blockLines(block: FutureWorkoutBlock, indent = ''): string[] {
   return [`${indent}${block.kind}: ${durationText(block.duration)} @ ${effortText(block.target)}${block.label ? ` — ${block.label}` : ''}${block.cue ? ` · ${block.cue}` : ''}`];
 }
 
+/** Public-safe structure: it contains only the approved workout's prescribed blocks and targets. */
+export function formatFutureWorkoutStructure(blocks: FutureWorkoutBlock[]): string[] {
+  return blocks.flatMap((block) => blockLines(block));
+}
+
 export function formatFutureWorkoutPreview(workout: FutureWorkoutProposal): string[] {
   return [
     `${workout.title} · ${workout.workoutType}`,
     `Scheduled: ${workout.schedule.localDate} (${workout.schedule.timezone})`,
     `Status: ${workout.lifecycle.approvalStatus} · sync ${workout.lifecycle.syncStatus}`,
     ...(workout.coachingNotes ? [`Notes: ${workout.coachingNotes}`] : []),
-    ...workout.blocks.flatMap((block) => blockLines(block)),
+    ...formatFutureWorkoutStructure(workout.blocks),
   ];
 }

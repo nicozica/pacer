@@ -26,7 +26,11 @@
     "auth:garmin": "ts-node --transpile-only src/auth/login.ts garmin",
     "capture": "ts-node --transpile-only src/capture/runner.ts",
     "test:publish-attempts": "ts-node --transpile-only src/session/publish-attempt-regression-cli.ts",
-    "test:review-publish-ui": "ts-node --transpile-only src/web/review-publish-ui-regression-cli.ts"
+    "test:review-publish-ui": "ts-node --transpile-only src/web/review-publish-ui-regression-cli.ts",
+    "test:skip-workout": "ts-node --transpile-only src/workouts/skip-regression-cli.ts",
+    "test:skip-completion": "ts-node --transpile-only src/workouts/skip-completion-regression-cli.ts",
+    "test:remote-cancellation": "ts-node --transpile-only src/workouts/remote-cancellation-regression-cli.ts",
+    "test:skip-workout-ui": "ts-node --transpile-only src/web/skip-workout-ui-regression-cli.ts"
   },
   "dependencies": {
     "better-sqlite3": "^12.8.0",

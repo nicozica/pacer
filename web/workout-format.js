@@ -105,6 +105,14 @@
     return (runs || []).some((run) => run.sessionDate === date && run.sourceActivityId !== sourceId);
   }
 
+  /** Deterministic order: earliest date, then newest revision, then id. */
+  function compareUpcoming(a, b) {
+    const wa = a.workout; const wb = b.workout;
+    return String(wa.schedule?.localDate).localeCompare(String(wb.schedule?.localDate))
+      || (Number(wb.proposalRevision) || 0) - (Number(wa.proposalRevision) || 0)
+      || String(wa.pacerWorkoutId).localeCompare(String(wb.pacerWorkoutId));
+  }
+
   /**
    * Splits stored workouts into `actions` (upcoming, still needing approval or a sync) and `next`
    * (the nearest upcoming workout that is approved and synced). Past and completed workouts, and
@@ -118,17 +126,34 @@
       const lifecycle = workout.lifecycle || {};
       const date = String(workout.schedule?.localDate || '');
       if (lifecycle.approvalStatus === 'rejected' || lifecycle.approvalStatus === 'superseded') continue;
+      if (record.skip) continue;
       if (!date || date < localToday(workout.schedule?.timezone, now)) continue;
       if (isWorkoutCompleted(workout, runs)) continue;
       if (lifecycle.approvalStatus === 'approved' && lifecycle.syncStatus === 'synced') {
-        if (!next || date < next.workout.schedule.localDate) next = record;
+        if (!next || compareUpcoming(record, next) < 0) next = record;
       } else {
         actions.push(record);
       }
     }
-    actions.sort((a, b) => String(a.workout.schedule.localDate).localeCompare(String(b.workout.schedule.localDate)));
+    actions.sort(compareUpcoming);
     return { actions, next };
   }
 
-  return { stepName, formatDuration, formatPaceRange, formatDateLabel, renderWorkout, blocksHtml, localToday, isWorkoutCompleted, selectUpcomingWorkouts };
+  /**
+   * The workout the home "Next workout" panel shows, independent of which completed run is selected:
+   *  1. a workout for the selected run that still needs approval or a sync (Review & Publish work),
+   *     newest revision first;
+   *  2. otherwise the earliest upcoming approved-and-synced workout from any run.
+   * Skipped (including completed-after-skip), rejected, superseded, past and completed workouts and
+   * unapproved proposals for other runs are never chosen.
+   */
+  function pickNextWorkout(records, runs, selectedSourceActivityId, now = new Date()) {
+    const { actions, next } = selectUpcomingWorkouts(records, runs, now);
+    const mine = actions
+      .filter((record) => record.workout.sourceSession?.sourceActivityId === selectedSourceActivityId)
+      .sort((a, b) => (Number(b.workout.proposalRevision) || 0) - (Number(a.workout.proposalRevision) || 0) || compareUpcoming(a, b));
+    return mine[0] || next || null;
+  }
+
+  return { pickNextWorkout, stepName, formatDuration, formatPaceRange, formatDateLabel, renderWorkout, blocksHtml, localToday, isWorkoutCompleted, selectUpcomingWorkouts };
 }));

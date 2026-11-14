@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Skip workout · Pacer</title>
+  <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16.png?v=7">
+  <link rel="stylesheet" href="/style.css?v=20261119a">
+</head>
+<body>
+
+<header>
+  <div class="header-inner">
+    <h1>Pacer</h1>
+    <div class="meta">
+      <span id="skip-page-status">Loading…</span>
+      <a class="meta-link" href="/">← Back to Pacer</a>
+    </div>
+  </div>
+</header>
+
+<main class="skip-page">
+  <div id="error-banner" class="error hidden" role="status" aria-live="polite"></div>
+
+  <section id="coachat-section" aria-labelledby="skip-heading">
+    <h2 id="skip-heading">Skip workout</h2>
+
+    <div class="coachat-step" id="skip-step-workout">
+      <h3><span class="step-num">1</span> Workout &amp; Recovery <span id="skip-badge" class="status-badge hidden"></span></h3>
+      <div id="skip-workout" class="ai-preview"><p class="empty">Loading workout and recovery data…</p></div>
+      <div id="skip-recovery" class="ai-preview hidden"></div>
+      <p id="skip-change-note" class="skip-conflict hidden" role="status" aria-live="polite"></p>
+      <label class="full-width">Explanation (optional)
+        <textarea id="skip-explanation" rows="3" maxlength="2000" placeholder="Why are you skipping it?" disabled></textarea>
+      </label>
+      <p id="skip-brief-note" class="field-help"></p>
+      <div class="actions brief-actions">
+        <button id="skip-copy-all" class="button-primary" disabled>Copy Training Brief + Context</button>
+        <span id="skip-copy-status" class="field-help" role="status" aria-live="polite"></span>
+      </div>
+      <details id="skip-review"><summary class="skip-note">Review what will be copied</summary>
+        <textarea id="skip-export" class="skip-json" rows="14" readonly aria-label="Training Brief and context"></textarea>
+      </details>
+    </div>
+
+    <div class="coachat-step" id="skip-step-import">
+      <h3><span class="step-num">2</span> Coachat Response</h3>
+      <p class="field-help">Paste the brief and context into Coachat, then paste its standalone future-workout-v1 JSON here. Pasting changes nothing in Pacer.</p>
+      <label class="full-width">Standalone future-workout-v1 JSON
+        <textarea id="ai-json-input" rows="8" placeholder='Paste the future-workout-v1 JSON here' disabled></textarea>
+      </label>
+      <div class="ai-import-toolbar">
+        <label class="file-label">Or upload .json
+          <input type="file" id="ai-json-file" accept=".json,application/json" disabled>
+        </label>
+      </div>
+      <p id="ai-import-status" class="field-help ai-status" role="status" aria-live="polite">Paste the future-workout-v1 JSON returned by Coachat.</p>
+    </div>
+
+    <div class="coachat-step" id="skip-step-confirm">
+      <h3><span class="step-num">3</span> Confirm, Sync &amp; Publish</h3>
+      <h4>New workout <span id="workout-status-badge" class="status-badge hidden"></span></h4>
+      <div id="skip-workout-preview" class="ai-preview"><p class="empty">Nothing to confirm yet.</p></div>
+      <p id="workout-status-note" class="field-help"></p>
+      <p id="skip-step-note" class="field-help">Confirming records the skipped workout privately, then cancels only its verified Pacer-owned planned Intervals.icu event before importing and approving the replacement, synchronizing it, and updating the public Next Run on run.nico.ar. A cancellation failure never blocks the replacement; Garmin propagation is not verified. Only the replacement workout is published; recovery data, your explanation and the Coachat context stay private.</p>
+      <ul id="skip-stages" class="coachat-result hidden" role="status" aria-live="polite"></ul>
+      <div class="actions save-actions">
+        <button id="btn-confirm" class="button-primary" disabled>Confirm, Sync &amp; Publish</button>
+      </div>
+      <div id="save-banner" class="notice hidden" role="status" aria-live="polite"></div>
+    </div>
+  </section>
+</main>
+
+<footer class="site-footer">
+  <p>Private CMS and training backoffice for run.nico.ar</p>
+  <p>Only the replacement workout is ever published.</p>
+</footer>
+
+<script src="/workout-format.js?v=20261119a"></script>
+<script src="/skip-common.js?v=20261119a"></script>
+<script src="/skip/app.js?v=20261119a"></script>
+</body>
+</html>

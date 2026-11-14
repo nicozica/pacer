@@ -385,8 +385,8 @@ const COACHAT_RESPONSE_VERSION = 'coachat-response-v1';
 /**
  * Classifies pasted text. `coachat-response-v1` envelopes yield the session
  * analysis plus the raw future workout; bare session-ai-v1 objects stay
- * supported as session-only input. A bare future-workout-v1 is rejected so the
- * user never has to split a response by hand.
+ * supported as session-only input. A bare future-workout-v1 is identified as a
+ * standalone workout (imported only, never paired with a session analysis).
  */
 function parseCoachatText(text) {
   if (!text.trim()) return { kind: 'empty', ai: blankAiInput(), futureWorkout: null };
@@ -413,7 +413,9 @@ function parseCoachatText(text) {
     return { kind: 'envelope', ai, futureWorkout };
   }
   if (payload.contractVersion === 'future-workout-v1') {
-    throw new Error('This is only the workout. Paste the complete coachat-response-v1 reply, which also contains the session analysis.');
+    // Standalone workout (the Skip Workout flow). No session analysis exists, so none is created;
+    // the server validates it when the user chooses Import Workout.
+    return { kind: 'workout', ai: blankAiInput(), futureWorkout: payload };
   }
   if (payload.contractVersion !== undefined) {
     throw new Error(`Unsupported contractVersion "${payload.contractVersion}". Expected ${COACHAT_RESPONSE_VERSION}.`);
@@ -554,6 +556,8 @@ function syncAiImport(rawText, options = {}) {
     renderWorkoutPreview(currentAiImport.workoutCheck);
     if (parsed.kind === 'envelope') {
       void runWorkoutCheck(text);
+    } else if (parsed.kind === 'workout') {
+      setAiImportStatus('Standalone future-workout-v1 detected. Choose Import Workout to validate and store it. It will not be approved or synced automatically.', 'valid');
     } else {
       setAiImportStatus(
         options.validMessage ?? (currentAiImport.hasContent
@@ -608,12 +612,13 @@ function isCoachatSaveable() {
   const ai = currentAiImport;
   if (!ai || ai.kind === 'empty') return true;
   if (ai.kind === 'envelope') return ai.workoutCheck.state === 'valid';
-  return ai.kind === 'legacy';
+  return ai.kind === 'legacy' || ai.kind === 'workout';
 }
 
 // Pacer's "synced" lifecycle only means the event exists on the Intervals.icu calendar. Intervals
 // exposes no supported way to confirm it reached Garmin Connect, so no Garmin success is ever shown.
 const WORKOUT_STATUS_LABEL = {
+  skipped: 'Skipped', conflict: 'Skipped · activity found',
   proposed: 'Proposed', syncing: 'Publishing / Syncing', sent: 'Sent to Intervals',
   failed: 'Sync failed', approved: 'Approved · not sent', superseded: 'Superseded',
 };
@@ -630,19 +635,24 @@ function reviewTarget() {
   const ai = currentAiImport;
   const session = currentEditorSession;
   const records = window.PacerWorkouts?.records() ?? [];
-  const pasted = ai?.kind === 'envelope' && ai.workoutCheck.state === 'valid' ? ai.workoutCheck.workout : null;
+  const standalone = ai?.kind === 'workout';
+  const pasted = (ai?.kind === 'envelope' || standalone) && ai.workoutCheck.state === 'valid' ? ai.workoutCheck.workout : null;
   let record = null;
   if (pasted) {
     const wanted = workoutContentKey(pasted);
     record = records.find((entry) => workoutContentKey(entry.workout) === wanted) || null;
-  } else if (session && ai?.kind !== 'envelope') {
-    const today = (workout) => window.PacerWorkoutFormat.localToday(workout.schedule?.timezone, new Date());
-    const forSession = records
-      .filter((entry) => entry.workout.sourceSession?.sourceActivityId === session.selectedSourceActivityId
-        && entry.workout.lifecycle?.approvalStatus !== 'rejected'
-        && String(entry.workout.schedule?.localDate || '') >= today(entry.workout))
-      .sort((x, y) => y.workout.proposalRevision - x.workout.proposalRevision);
-    record = forSession.find((entry) => entry.workout.lifecycle?.approvalStatus !== 'superseded') || forSession[0] || null;
+  } else if (ai?.kind !== 'envelope' && !standalone) {
+    const runs = (currentEditorBootstrap?.recentRuns ?? []).map((run) => ({ sourceActivityId: run.sourceActivityId, sessionDate: run.sessionDate }));
+    record = window.PacerWorkoutFormat.pickNextWorkout(records, runs, session?.selectedSourceActivityId, new Date());
+    if (!record && session) {
+      // Nothing active: still show a superseded revision for this run so its status stays visible.
+      const today = (workout) => window.PacerWorkoutFormat.localToday(workout.schedule?.timezone, new Date());
+      record = records
+        .filter((entry) => entry.workout.sourceSession?.sourceActivityId === session.selectedSourceActivityId
+          && entry.workout.lifecycle?.approvalStatus === 'superseded' && !entry.skip
+          && String(entry.workout.schedule?.localDate || '') >= today(entry.workout))
+        .sort((x, y) => y.workout.proposalRevision - x.workout.proposalRevision)[0] || null;
+    }
   }
   const lifecycle = record?.workout.lifecycle;
   const superseded = lifecycle?.approvalStatus === 'superseded';
@@ -655,14 +665,20 @@ function reviewTarget() {
     else if (lifecycle.syncStatus === 'failed') status = 'failed';
     else if (lifecycle.approvalStatus === 'approved') status = 'approved';
   }
+  // A skipped workout is never approved or sent: it must not be reactivated from this panel.
+  const skipped = Boolean(record?.skip);
+  if (skipped) status = record.outcomeStatus === 'completed_after_skip' ? 'conflict' : 'skipped';
   if (activeRun && (activeRun.current === 'approve' || activeRun.current === 'sync')) status = 'syncing';
   const approved = lifecycle?.approvalStatus === 'approved';
+  const open = Boolean(record) && !superseded && !skipped && lifecycle.syncStatus !== 'synced'
+    && lifecycle.approvalStatus !== 'rejected';
   return {
-    pasted: Boolean(pasted), workout, record, status, superseded,
-    hasWorkout: Boolean(workout) && !(superseded && !pasted),
-    blockPublish: Boolean(pasted) && superseded,
+    pasted: Boolean(pasted), standalone, workout, record, status, superseded, skipped,
+    hasWorkout: Boolean(workout) && !(superseded && !pasted) && !skipped,
+    blockPublish: Boolean(pasted) && (superseded || skipped),
     error: lifecycle?.lastSyncError || '',
-    canRetrySync: Boolean(record) && approved && !superseded && lifecycle.syncStatus !== 'synced',
+    canRetrySync: open && approved,
+    canApproveSync: open,
   };
 }
 
@@ -692,13 +708,14 @@ function renderReviewStatus() {
   const target = reviewTarget();
   const badge = document.getElementById('workout-status-badge');
   const note = document.getElementById('workout-status-note');
-  if (currentAiImport?.kind !== 'envelope') {
+  if (currentAiImport?.kind !== 'envelope' && currentAiImport?.kind !== 'workout') {
     const preview = document.getElementById('coachat-workout-preview');
     preview.innerHTML = target.workout
       ? window.PacerWorkoutFormat.renderWorkout(target.workout)
       : `<p class="empty">${window.PacerWorkouts?.isLoaded() ? 'No upcoming workout.' : 'Loading workout…'}</p>`;
   }
   badge.classList.toggle('hidden', !target.workout);
+  window.PacerSkip?.renderTargetAction(target);
   if (!target.workout) { note.textContent = ''; return; }
   setBadge(badge, target.status, WORKOUT_STATUS_LABEL);
   note.textContent = {
@@ -708,7 +725,13 @@ function renderReviewStatus() {
     failed: `Not on your calendar. ${target.error} Use Retry Sync.`,
     approved: 'Approved but not on your calendar yet. Use Retry Sync.',
     superseded: 'Replaced by a newer revision. It won’t be sent.',
+    skipped: 'Skipped. It won’t be sent or synced. Details are under Skipped workouts.',
+    conflict: 'Skipped, but an activity was later completed for it. Review under Skipped workouts.',
   }[target.status];
+  if (target.standalone && target.record && target.canApproveSync && !target.skipped) {
+    note.textContent = target.status === 'approved' || target.status === 'failed'
+      ? note.textContent : 'Imported, not approved and not sent. Use Approve & Sync when you are ready.';
+  }
 }
 
 function actionLabel(mode) {
@@ -719,11 +742,25 @@ function actionLabel(mode) {
 function applyActionState() {
   document.getElementById('btn-copy').disabled = uiBusy;
   document.getElementById('btn-download').disabled = uiBusy;
-  const blocked = uiBusy || saveInFlight || !currentEditorSession || !isCoachatSaveable();
   const target = reviewTarget();
+  const retry = document.getElementById('btn-retry-sync');
+  if (currentAiImport?.kind === 'workout') {
+    // Standalone workout: import and (explicitly) approve/sync only. The session is never touched.
+    const busy = uiBusy || saveInFlight;
+    const imported = currentAiImport.workoutCheck.state === 'valid';
+    document.getElementById('btn-save').disabled = busy || imported;
+    document.getElementById('btn-save-publish').disabled = busy || !imported || !target.canApproveSync;
+    retry.classList.add('hidden');
+    if (!saveInFlight) {
+      document.getElementById('btn-save').textContent = imported ? 'Imported' : 'Import Workout';
+      document.getElementById('btn-save-publish').textContent = 'Approve & Sync';
+    }
+    renderReviewStatus();
+    return;
+  }
+  const blocked = uiBusy || saveInFlight || !currentEditorSession || !isCoachatSaveable();
   document.getElementById('btn-save').disabled = blocked;
   document.getElementById('btn-save-publish').disabled = blocked || target.blockPublish;
-  const retry = document.getElementById('btn-retry-sync');
   retry.classList.toggle('hidden', !target.canRetrySync);
   retry.disabled = uiBusy || saveInFlight;
   if (!saveInFlight) {
@@ -1506,11 +1543,37 @@ async function saveCurrentSession(mode) {
   }
 }
 
+/** Stores a standalone future-workout-v1 through the existing import endpoint. No approve, sync or publish. */
+async function importStandaloneWorkout() {
+  if (saveInFlight || currentAiImport?.kind !== 'workout') return;
+  hideError();
+  hideNotice();
+  saveInFlight = true;
+  setButtonsDisabled(true);
+  const button = document.getElementById('btn-save');
+  button.textContent = 'Importing…';
+  try {
+    // Server-side contract validation, duplicate and conflict handling are the existing import logic.
+    const result = await postJson('/api/workouts/import', currentAiImport.futureWorkout);
+    currentAiImport.workoutCheck = { state: 'valid', workout: result.proposal.workout, error: '' };
+    renderWorkoutPreview(currentAiImport.workoutCheck);
+    setAiImportStatus('Workout imported. Not approved and not sent to Intervals.icu.', 'valid');
+    await window.PacerWorkouts?.reload();
+    showNotice(`${WORKOUT_OPERATION_TEXT[result.operation] || 'Workout stored.'} It was not approved or synced, and the session was not changed.`);
+  } catch (err) {
+    setAiImportStatus(`Workout not imported: ${err.message}`, 'error');
+    showError(err.message || 'Could not import the workout.');
+  } finally {
+    saveInFlight = false;
+    setButtonsDisabled(false);
+  }
+}
+
 /** Approve (idempotent) and send an already-stored workout. Never saves or publishes the session. */
-async function retrySync() {
+async function retrySync(allowUnapproved = false) {
   if (saveInFlight) return;
   const target = reviewTarget();
-  if (!target.canRetrySync) return;
+  if (!(allowUnapproved === true ? target.canApproveSync : target.canRetrySync)) return;
   hideError();
   hideNotice();
   saveInFlight = true;
@@ -1746,15 +1809,19 @@ document.getElementById('source-activity').addEventListener('change', async (eve
 });
 
 document.getElementById('btn-save').addEventListener('click', async () => {
-  await saveCurrentSession('draft');
+  if (currentAiImport?.kind === 'workout') await importStandaloneWorkout();
+  else await saveCurrentSession('draft');
 });
 
 document.getElementById('btn-save-publish').addEventListener('click', async () => {
-  await saveCurrentSession('publish');
+  if (currentAiImport?.kind === 'workout') await retrySync(true);
+  else await saveCurrentSession('publish');
 });
 
-document.getElementById('btn-retry-sync').addEventListener('click', retrySync);
+document.getElementById('btn-retry-sync').addEventListener('click', () => retrySync());
 window.PacerWorkouts?.onChange(applyActionState);
+// Coming back from /skip/ (or any page) via history can restore a stale page: refresh workout state.
+window.addEventListener('pageshow', (event) => { if (event.persisted) void window.PacerWorkouts?.reload(); });
 
 document.getElementById('ai-json-input').addEventListener('input', () => {
   const text = document.getElementById('ai-json-input').value;

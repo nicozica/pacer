@@ -13,6 +13,8 @@ export interface IntervalsCalendarResponse extends IntervalsCalendarEvent {
 export interface IntervalsCalendarClient {
   upsert(event: IntervalsCalendarEvent): Promise<IntervalsCalendarResponse>;
   findByExternalId(externalId: string, localDate: string): Promise<IntervalsCalendarResponse | null>;
+  /** Deletes one known calendar event. Callers must establish ownership before using it. */
+  deleteById?(eventId: string): Promise<void>;
 }
 
 function pace(seconds: number): string {
@@ -64,12 +66,16 @@ export function toIntervalsCalendarEvent(workout: FutureWorkoutProposal): Interv
   };
 }
 
-export function validateIntervalsCalendarResponse(event: IntervalsCalendarResponse, expected: IntervalsCalendarEvent): void {
+export function validateIntervalsCalendarIdentity(event: IntervalsCalendarResponse, expected: IntervalsCalendarEvent): void {
   if (!Number.isInteger(event.id) || event.id <= 0) throw new Error('Intervals response did not include a valid event ID.');
   if (event.external_id !== expected.external_id || event.category !== 'WORKOUT' || event.type !== 'Run') {
     throw new Error('Intervals response does not match the Pacer workout identity.');
   }
   if (event.start_date_local.slice(0, 10) !== expected.start_date_local.slice(0, 10)) throw new Error('Intervals response changed the scheduled date.');
+}
+
+export function validateIntervalsCalendarResponse(event: IntervalsCalendarResponse, expected: IntervalsCalendarEvent): void {
+  validateIntervalsCalendarIdentity(event, expected);
   if (!Array.isArray(event.workout_doc?.steps) || event.workout_doc.steps.length === 0) throw new Error('Intervals did not return a parsed workout structure.');
 }
 
@@ -96,6 +102,12 @@ export function createIntervalsCalendarClient(fetchImpl: typeof fetch = fetch): 
       const events = await response.json() as unknown;
       if (!Array.isArray(events)) throw new Error('Intervals calendar reconciliation returned an invalid response.');
       return (events.find((entry) => entry && typeof entry === 'object' && (entry as { external_id?: unknown }).external_id === externalId) ?? null) as IntervalsCalendarResponse | null;
+    },
+    async deleteById(eventId) {
+      if (!/^\d+$/.test(eventId)) throw new Error('Intervals event ID is invalid.');
+      const url = `${config.intervalsApiBaseUrl.replace(/\/$/, '')}/athlete/${encodeURIComponent(config.intervalsAthleteId)}/events/${encodeURIComponent(eventId)}`;
+      const response = await fetchImpl(url, { method: 'DELETE', headers: { Authorization: authHeader(), Accept: 'application/json' } });
+      if (!response.ok && response.status !== 404) throw new Error(`Intervals calendar deletion failed (${response.status}).`);
     },
   };
 }

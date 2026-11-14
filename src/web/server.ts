@@ -8,7 +8,7 @@ import { getEditorBootstrap, publishSnapshots, saveSession } from '../session/se
 import { deployRunSite } from '../session/deploy';
 import { SaveSessionInput } from '../session/types';
 import { createRace, deleteRace, listRaces, RaceInput, updateRace } from '../races/service';
-import { approveFutureWorkout, getFutureWorkout, importFutureWorkout, listFutureWorkouts, synchronizeFutureWorkout } from '../workouts/service';
+import { approveFutureWorkout, cancelSkippedWorkoutRemotely, completeSkippedWorkout, getFutureWorkout, getSkipWorkoutDetails, getSkipWorkoutPreview, importFutureWorkout, listFutureWorkouts, markFutureWorkoutSkipped, previewFutureWorkoutSkip, publishFutureWorkoutAsPublicNextRun, synchronizeFutureWorkout } from '../workouts/service';
 import { validateUnifiedCoachatImport } from '../coachat/service';
 
 const WEB_DIR = path.resolve(process.cwd(), 'web');
@@ -222,7 +222,60 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  const workoutMatch = url.match(/^\/api\/workouts\/([^/]+)(?:\/(approve|sync))?$/);
+  const skipCompletionMatch = url.match(/^\/api\/workouts\/([^/]+)\/skip\/complete$/);
+  if (skipCompletionMatch) {
+    if (method !== 'POST') { sendJson(res, 405, { error: 'Method not allowed.' }); return; }
+    try {
+      sendJson(res, 200, await completeSkippedWorkout(decodeURIComponent(skipCompletionMatch[1]), await readJsonBody<import('../workouts/service').CompleteSkippedWorkoutInput>(req)));
+    } catch (err) {
+      const message = (err as Error).message;
+      sendJson(res, /not found/i.test(message) ? 404 : /cannot|only approved|paired|synchroniz/i.test(message) ? 409 : 400, { error: message });
+    }
+    return;
+  }
+
+  const remoteCancellationMatch = url.match(/^\/api\/workouts\/([^/]+)\/skip\/cancel-remote$/);
+  if (remoteCancellationMatch) {
+    if (method !== 'POST') { sendJson(res, 405, { error: 'Method not allowed.' }); return; }
+    try {
+      sendJson(res, 200, await cancelSkippedWorkoutRemotely(decodeURIComponent(remoteCancellationMatch[1])));
+    } catch (err) {
+      const message = (err as Error).message;
+      sendJson(res, /not found/i.test(message) ? 404 : /only skipped|completed activity|no stored|does not match/i.test(message) ? 409 : 502, { error: message });
+    }
+    return;
+  }
+
+  const skipWorkoutMatch = url.match(/^\/api\/workouts\/([^/]+)\/(skip|skip-preview)$/);
+  if (skipWorkoutMatch) {
+    const pacerWorkoutId = decodeURIComponent(skipWorkoutMatch[1]);
+    const action = skipWorkoutMatch[2];
+    try {
+      if (action === 'skip-preview' && method === 'GET') {
+        sendJson(res, 200, await getSkipWorkoutPreview(pacerWorkoutId));
+        return;
+      }
+      if (action === 'skip-preview' && method === 'POST') {
+        sendJson(res, 200, await previewFutureWorkoutSkip(pacerWorkoutId, await readJsonBody<unknown>(req)));
+        return;
+      }
+      if (action === 'skip' && method === 'GET') {
+        sendJson(res, 200, getSkipWorkoutDetails(pacerWorkoutId));
+        return;
+      }
+      if (action === 'skip' && method === 'POST') {
+        sendJson(res, 200, await markFutureWorkoutSkipped(pacerWorkoutId, await readJsonBody<unknown>(req)));
+        return;
+      }
+      sendJson(res, 405, { error: 'Method not allowed.' });
+    } catch (err) {
+      const message = (err as Error).message;
+      sendJson(res, /not found/i.test(message) ? 404 : /cannot|only approved|paired|synchroniz/i.test(message) ? 409 : 400, { error: message });
+    }
+    return;
+  }
+
+  const workoutMatch = url.match(/^\/api\/workouts\/([^/]+)(?:\/(approve|sync|publish-next-run))?$/);
   if (workoutMatch) {
     const pacerWorkoutId = decodeURIComponent(workoutMatch[1]);
     const action = workoutMatch[2];
@@ -251,6 +304,16 @@ const server = http.createServer(async (req, res) => {
     if (action === 'sync' && method === 'POST') {
       try { sendJson(res, 200, { proposal: await synchronizeFutureWorkout(pacerWorkoutId) }); }
       catch (err) { sendJson(res, 409, { error: (err as Error).message }); }
+      return;
+    }
+    if (action === 'publish-next-run' && method === 'POST') {
+      try {
+        const result = await publishFutureWorkoutAsPublicNextRun(pacerWorkoutId);
+        sendJson(res, result.publishStatus.ok ? 200 : 502, result);
+      } catch (err) {
+        const message = (err as Error).message;
+        sendJson(res, /not found|eligible|current/i.test(message) ? 409 : 500, { error: message });
+      }
       return;
     }
   }

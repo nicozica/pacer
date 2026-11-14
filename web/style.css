@@ -705,3 +705,48 @@ button:disabled {
 .next-workout-title { color: var(--text-strong); font-size: 0.92rem; font-weight: 700; overflow-wrap: anywhere; }
 .next-workout-date { color: var(--text-muted); font-size: 0.82rem; }
 @media (max-width: 480px) { .next-workout { flex-direction: column; align-items: flex-start; gap: 0.4rem; } }
+
+/* ---- Skip workout ---- */
+.skip-actions { margin-top: 0.4rem; display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; }
+.status-badge.is-skipped { background: #f2f3f5; color: var(--text-muted); }
+.status-badge.is-conflict { border-color: rgba(154, 61, 24, 0.35); background: #fdf1ea; color: #8a3414; }
+.skipped-workouts { display: grid; gap: 0.6rem; }
+.skipped-workouts h4 { margin: 0; color: var(--text-muted); font-size: 0.72rem; letter-spacing: 0.06em; text-transform: uppercase; }
+.skipped-workout { display: grid; gap: 0.45rem; padding: 0.6rem 0.84rem; border: 1px solid var(--border); border-radius: 9px; background: #fafbfc; }
+.skipped-workout.has-conflict { border-color: rgba(154, 61, 24, 0.35); }
+.skipped-title { color: var(--text-strong); font-size: 0.92rem; font-weight: 700; overflow-wrap: anywhere; }
+.skipped-meta, .skip-note { color: var(--text-muted); font-size: 0.82rem; margin: 0; }
+.skipped-actions { align-items: center; }
+.skipped-actions .field-help { margin: 0; }
+.skipped-workout summary { cursor: pointer; color: var(--text-muted); font-size: 0.82rem; }
+.skip-detail-body { display: grid; gap: 0.4rem; padding-top: 0.5rem; font-size: 0.86rem; }
+.skip-detail-body p { margin: 0; }
+.skip-detail-body h5 { margin: 0.4rem 0 0.1rem; color: var(--text-muted); font-size: 0.72rem; letter-spacing: 0.06em; text-transform: uppercase; }
+.skip-detail-body h5 small { text-transform: none; letter-spacing: 0; font-weight: 400; }
+.skip-brief { width: 100%; box-sizing: border-box; font-family: 'Courier New', Courier, monospace; font-size: 0.8rem; background: #fbfbfc; }
+.skip-conflict { margin: 0; padding: 0.45rem 0.7rem; border: 1px solid rgba(154, 61, 24, 0.35); border-radius: 6px; background: #fdf1ea; color: #8a3414; font-size: 0.84rem; }
+
+.skip-link { display: inline-block; padding: 0.4rem 0.35rem; border-radius: 6px; color: var(--text-muted); font-size: 0.85rem; font-weight: 500; text-decoration: none; }
+.skip-link:hover { color: var(--text); text-decoration: underline; }
+.skip-page .coachat-step textarea { width: 100%; box-sizing: border-box; }
+.skip-page .skip-json { font-family: 'Courier New', Courier, monospace; font-size: 0.8rem; background: #fbfbfc; }
+
+/* ---- Recovery summary ---- */
+.rec { display: grid; gap: 0.55rem; }
+.rec-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.5rem; }
+.rec-card { display: grid; align-content: start; gap: 0.15rem; min-width: 0; padding: 0.5rem 0.7rem; border: 1px solid var(--border); border-radius: 8px; background: #fff; }
+.rec-label { color: var(--text-muted); font-size: 0.72rem; letter-spacing: 0.04em; text-transform: uppercase; }
+.rec-value { color: var(--text-strong); font-size: 1.05rem; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.rec-value.is-unavailable { color: var(--text-subtle); font-size: 0.9rem; font-weight: 500; }
+.rec-sub { color: var(--text-muted); font-size: 0.78rem; overflow-wrap: anywhere; }
+.rec-split { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.1rem; }
+.rec-split li { display: flex; justify-content: space-between; gap: 0.5rem; min-width: 0; font-size: 0.86rem; }
+.rec-split span { color: var(--text-muted); }
+.rec-split strong { color: var(--text-strong); font-variant-numeric: tabular-nums; text-align: right; overflow-wrap: anywhere; }
+.rec-flag { justify-self: start; border: 1px solid rgba(154, 61, 24, 0.35); border-radius: 999px; padding: 0.04rem 0.42rem; background: #fdf1ea; color: #8a3414; font-size: 0.7rem; font-weight: 700; }
+.rec > * { min-width: 0; }
+.rec-note { margin: 0; color: #8a3414; font-size: 0.82rem; overflow-wrap: anywhere; }
+.rec-secondary { margin: 0; color: var(--text); font-size: 0.84rem; overflow-wrap: anywhere; }
+.rec-prov summary { cursor: pointer; color: var(--text-muted); font-size: 0.78rem; }
+.rec-prov ul { margin: 0.3rem 0 0; padding-left: 1rem; color: var(--text-muted); font-size: 0.76rem; overflow-wrap: anywhere; }
+@media (max-width: 340px) { .rec-grid { grid-template-columns: minmax(0, 1fr); } }

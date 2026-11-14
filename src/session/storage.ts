@@ -64,6 +64,28 @@ export interface StoredFutureWorkout {
   createdAt: string;
   storedAt: string;
   revisions: StoredFutureWorkoutRevision[];
+  skip: StoredFutureWorkoutSkip | null;
+}
+
+export interface StoredFutureWorkoutSkip {
+  pacerWorkoutId: string;
+  skippedAt: string;
+  explanation: string | null;
+  wellnessSnapshot: unknown;
+  wellnessCollectedAt: string;
+  wellnessProvenance: unknown;
+  conflictActivityId: number | null;
+  conflictDetectedAt: string | null;
+  planningAnchor: { sourceActivityId: number; sessionDate: string; title: string } | null;
+}
+
+export interface StoredFutureWorkoutRemoteCancellation {
+  pacerWorkoutId: string;
+  intervalsEventId: string;
+  externalId: string;
+  status: 'deleted' | 'already_absent' | 'failed';
+  attemptedAt: string;
+  error: string | null;
 }
 
 export interface FutureWorkoutImportResult {
@@ -463,9 +485,86 @@ function migrate(db: SqliteDatabase): void {
       db.pragma('user_version = 9');
     })();
   }
+  if (currentVersion < 10) {
+    db.transaction(() => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS future_workout_skips (
+          pacer_workout_id TEXT PRIMARY KEY,
+          skipped_at TEXT NOT NULL,
+          explanation TEXT,
+          wellness_snapshot_json TEXT NOT NULL,
+          wellness_collected_at TEXT NOT NULL,
+          wellness_provenance_json TEXT NOT NULL,
+          conflict_activity_id INTEGER,
+          conflict_detected_at TEXT,
+          created_at TEXT NOT NULL,
+          FOREIGN KEY (pacer_workout_id) REFERENCES future_workouts(pacer_workout_id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_future_workout_skips_conflict ON future_workout_skips(conflict_activity_id);
+      `);
+      db.pragma('user_version = 10');
+    })();
+  }
+  if (currentVersion < 11) {
+    db.transaction(() => {
+      if (!columnExists(db, 'future_workout_skips', 'planning_anchor_json')) {
+        db.exec(`ALTER TABLE future_workout_skips ADD COLUMN planning_anchor_json TEXT;`);
+      }
+      db.pragma('user_version = 11');
+    })();
+  }
+  if (currentVersion < 12) {
+    db.transaction(() => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS future_workout_publications (
+          pacer_workout_id TEXT PRIMARY KEY,
+          ok INTEGER NOT NULL,
+          message TEXT NOT NULL,
+          attempted_at TEXT NOT NULL,
+          published_at TEXT,
+          FOREIGN KEY (pacer_workout_id) REFERENCES future_workouts(pacer_workout_id) ON DELETE CASCADE
+        );
+      `);
+      db.pragma('user_version = 12');
+    })();
+  }
+  if (currentVersion < 13) {
+    db.transaction(() => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS future_workout_remote_cancellations (
+          pacer_workout_id TEXT PRIMARY KEY,
+          intervals_event_id TEXT NOT NULL,
+          external_id TEXT NOT NULL,
+          status TEXT NOT NULL CHECK (status IN ('deleted','already_absent','failed')),
+          attempted_at TEXT NOT NULL,
+          error TEXT,
+          FOREIGN KEY (pacer_workout_id) REFERENCES future_workouts(pacer_workout_id) ON DELETE CASCADE
+        );
+      `);
+      db.pragma('user_version = 13');
+    })();
+  }
 }
 
 export interface StoredSessionPublishAttempt { ok: boolean; message: string; attemptedAt: string; }
+export interface StoredFutureWorkoutPublication { ok: boolean; message: string; attemptedAt: string; publishedAt: string | null; }
+
+export function getStoredFutureWorkoutPublication(pacerWorkoutId: string): StoredFutureWorkoutPublication | null {
+  const row = getDatabase().prepare('SELECT ok, message, attempted_at, published_at FROM future_workout_publications WHERE pacer_workout_id = ?')
+    .get(pacerWorkoutId) as { ok: number; message: string; attempted_at: string; published_at: string | null } | undefined;
+  return row ? { ok: row.ok === 1, message: row.message, attemptedAt: row.attempted_at, publishedAt: row.published_at } : null;
+}
+
+export function recordStoredFutureWorkoutPublication(pacerWorkoutId: string, ok: boolean, message: string): StoredFutureWorkoutPublication {
+  const now = new Date().toISOString();
+  getDatabase().prepare(`
+    INSERT INTO future_workout_publications (pacer_workout_id, ok, message, attempted_at, published_at)
+    VALUES (?, ?, ?, ?, ?)
+    ON CONFLICT(pacer_workout_id) DO UPDATE SET ok=excluded.ok, message=excluded.message, attempted_at=excluded.attempted_at,
+      published_at=CASE WHEN excluded.ok=1 THEN excluded.published_at ELSE future_workout_publications.published_at END
+  `).run(pacerWorkoutId, ok ? 1 : 0, message.slice(0, 500), now, ok ? now : null);
+  return getStoredFutureWorkoutPublication(pacerWorkoutId)!;
+}
 
 export function recordSessionPublishAttempt(sessionId: number, ok: boolean, message: string): void {
   getDatabase().prepare('INSERT INTO session_publish_attempts (session_id, ok, message, attempted_at) VALUES (?, ?, ?, ?)')
@@ -1077,7 +1176,91 @@ function mapStoredFutureWorkout(db: SqliteDatabase, row: Record<string, unknown>
     createdAt: String(row.created_at),
     storedAt: String(row.stored_at),
     revisions: futureWorkoutRevisions(db, pacerWorkoutId),
+    skip: getStoredFutureWorkoutSkipFromDatabase(db, pacerWorkoutId),
   };
+}
+
+function getStoredFutureWorkoutSkipFromDatabase(db: SqliteDatabase, pacerWorkoutId: string): StoredFutureWorkoutSkip | null {
+  const row = db.prepare(`SELECT * FROM future_workout_skips WHERE pacer_workout_id=?`).get(pacerWorkoutId) as Record<string, unknown> | undefined;
+  if (!row) return null;
+  try {
+    return {
+      pacerWorkoutId,
+      skippedAt: String(row.skipped_at),
+      explanation: typeof row.explanation === 'string' ? row.explanation : null,
+      wellnessSnapshot: JSON.parse(String(row.wellness_snapshot_json)),
+      wellnessCollectedAt: String(row.wellness_collected_at),
+      wellnessProvenance: JSON.parse(String(row.wellness_provenance_json)),
+      conflictActivityId: typeof row.conflict_activity_id === 'number' ? row.conflict_activity_id : null,
+      conflictDetectedAt: typeof row.conflict_detected_at === 'string' ? row.conflict_detected_at : null,
+      planningAnchor: typeof row.planning_anchor_json === 'string' && row.planning_anchor_json
+        ? JSON.parse(row.planning_anchor_json) as StoredFutureWorkoutSkip['planningAnchor'] : null,
+    };
+  } catch {
+    throw new Error(`Stored skip for future workout ${pacerWorkoutId} has invalid JSON.`);
+  }
+}
+
+export function getStoredFutureWorkoutSkip(pacerWorkoutId: string): StoredFutureWorkoutSkip | null {
+  return getStoredFutureWorkoutSkipFromDatabase(getDatabase(), pacerWorkoutId);
+}
+
+export function getStoredFutureWorkoutRemoteCancellation(pacerWorkoutId: string): StoredFutureWorkoutRemoteCancellation | null {
+  const row = getDatabase().prepare(`SELECT * FROM future_workout_remote_cancellations WHERE pacer_workout_id=?`).get(pacerWorkoutId) as Record<string, unknown> | undefined;
+  if (!row) return null;
+  return {
+    pacerWorkoutId,
+    intervalsEventId: String(row.intervals_event_id),
+    externalId: String(row.external_id),
+    status: String(row.status) as StoredFutureWorkoutRemoteCancellation['status'],
+    attemptedAt: String(row.attempted_at),
+    error: typeof row.error === 'string' ? row.error : null,
+  };
+}
+
+export function recordStoredFutureWorkoutRemoteCancellation(input: Omit<StoredFutureWorkoutRemoteCancellation, 'attemptedAt'>): StoredFutureWorkoutRemoteCancellation {
+  const attemptedAt = new Date().toISOString();
+  getDatabase().prepare(`
+    INSERT INTO future_workout_remote_cancellations (
+      pacer_workout_id, intervals_event_id, external_id, status, attempted_at, error
+    ) VALUES (?, ?, ?, ?, ?, ?)
+    ON CONFLICT(pacer_workout_id) DO UPDATE SET
+      intervals_event_id=excluded.intervals_event_id, external_id=excluded.external_id,
+      status=excluded.status, attempted_at=excluded.attempted_at, error=excluded.error
+  `).run(input.pacerWorkoutId, input.intervalsEventId, input.externalId, input.status, attemptedAt, input.error);
+  const cancellation = getStoredFutureWorkoutRemoteCancellation(input.pacerWorkoutId);
+  if (!cancellation) throw new Error('Could not reload remote cancellation state.');
+  return cancellation;
+}
+
+export function createStoredFutureWorkoutSkip(input: Omit<StoredFutureWorkoutSkip, 'conflictActivityId' | 'conflictDetectedAt'>): { operation: 'created' | 'unchanged'; skip: StoredFutureWorkoutSkip } {
+  const db = getDatabase();
+  const operation = db.transaction(() => {
+    const workout = getStoredFutureWorkoutRow(db, input.pacerWorkoutId);
+    if (!workout) throw new Error('Future workout not found.');
+    if (String(workout.approval_status) !== 'approved') throw new Error('Only approved future workouts can be skipped.');
+    if (String(workout.sync_status) === 'syncing') throw new Error('A workout being synchronized cannot be skipped.');
+    if (getStoredFutureWorkoutSkipFromDatabase(db, input.pacerWorkoutId)) return 'unchanged' as const;
+    db.prepare(`INSERT INTO future_workout_skips (
+      pacer_workout_id, skipped_at, explanation, wellness_snapshot_json, wellness_collected_at,
+      wellness_provenance_json, planning_anchor_json, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
+      .run(input.pacerWorkoutId, input.skippedAt, input.explanation, JSON.stringify(input.wellnessSnapshot), input.wellnessCollectedAt,
+        JSON.stringify(input.wellnessProvenance), input.planningAnchor ? JSON.stringify(input.planningAnchor) : null, input.skippedAt);
+    return 'created' as const;
+  })();
+  const skip = getStoredFutureWorkoutSkip(input.pacerWorkoutId);
+  if (!skip) throw new Error('Could not reload stored workout skip.');
+  return { operation, skip };
+}
+
+export function recordStoredFutureWorkoutSkipConflict(pacerWorkoutId: string, activityId: number): StoredFutureWorkoutSkip | null {
+  const db = getDatabase();
+  const existing = getStoredFutureWorkoutSkipFromDatabase(db, pacerWorkoutId);
+  if (!existing || existing.conflictActivityId === activityId) return existing;
+  db.prepare(`UPDATE future_workout_skips SET conflict_activity_id=?, conflict_detected_at=? WHERE pacer_workout_id=?`)
+    .run(activityId, new Date().toISOString(), pacerWorkoutId);
+  return getStoredFutureWorkoutSkipFromDatabase(db, pacerWorkoutId);
 }
 
 function getStoredFutureWorkoutRow(db: SqliteDatabase, pacerWorkoutId: string): Record<string, unknown> | null {
@@ -1286,6 +1469,7 @@ export function approveStoredFutureWorkout(pacerWorkoutId: string, approvalNote:
   db.transaction(() => {
     const row = getStoredFutureWorkoutRow(db, pacerWorkoutId);
     if (!row) throw new Error('Future workout not found.');
+    if (getStoredFutureWorkoutSkipFromDatabase(db, pacerWorkoutId)) throw new Error('Skipped workouts cannot be approved or synchronized.');
     const existing = parseStoredFutureWorkout(row);
     if (existing.lifecycle.approvalStatus === 'approved') return;
     if (existing.lifecycle.approvalStatus !== 'proposed' || existing.lifecycle.syncStatus !== 'not_requested') {
@@ -1320,6 +1504,7 @@ export function beginFutureWorkoutSync(pacerWorkoutId: string): StoredFutureWork
   db.transaction(() => {
     const row = getStoredFutureWorkoutRow(db, pacerWorkoutId);
     if (!row) throw new Error('Future workout not found.');
+    if (getStoredFutureWorkoutSkipFromDatabase(db, pacerWorkoutId)) throw new Error('Skipped workouts cannot be approved or synchronized.');
     if (String(row.approval_status) !== 'approved') throw new Error('Only approved future workouts can synchronize.');
     if (String(row.sync_status) === 'synced') return;
     if (String(row.sync_status) === 'syncing') {
@@ -1338,6 +1523,7 @@ export function beginFutureWorkoutSync(pacerWorkoutId: string): StoredFutureWork
 export function finishFutureWorkoutSync(pacerWorkoutId: string, eventId: string): StoredFutureWorkout {
   const db = getDatabase(); const now = new Date().toISOString();
   db.transaction(() => {
+    if (getStoredFutureWorkoutSkipFromDatabase(db, pacerWorkoutId)) throw new Error('Skipped workouts cannot be approved or synchronized.');
     db.prepare(`UPDATE future_workouts SET sync_status='synced', synced_at=?, intervals_event_id=?, last_sync_error=NULL, stored_at=? WHERE pacer_workout_id=? AND approval_status='approved'`).run(now, eventId, now, pacerWorkoutId);
     db.prepare(`INSERT INTO future_workout_sync_attempts (pacer_workout_id,status,remote_event_id,attempted_at) VALUES (?, 'synced', ?, ?)`).run(pacerWorkoutId,eventId,now);
   })(); return getStoredFutureWorkout(pacerWorkoutId)!;
