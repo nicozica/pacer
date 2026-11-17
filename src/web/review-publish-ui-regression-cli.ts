@@ -144,7 +144,7 @@ async function main() {
       await page.click('#btn-save-publish');
       await page.waitForFunction(() => document.getElementById('save-banner')?.textContent?.includes('Intervals'));
       const order = mock.calls.filter((call) => /import|save-and-publish|approve|sync/.test(call));
-      assert.deepEqual(order, ['POST /api/workouts/import', 'POST /api/editor/save-and-publish', `POST /api/workouts/${WORKOUT_ID}/approve`, `POST /api/workouts/${WORKOUT_ID}/sync`]);
+      assert.deepEqual(order, ['POST /api/workouts/import', `POST /api/workouts/${WORKOUT_ID}/approve`, `POST /api/workouts/${WORKOUT_ID}/sync`, 'POST /api/editor/save-and-publish']);
       assert.equal(await text(page, 'session-status-badge'), 'Published');
       assert.equal(await text(page, 'workout-status-badge'), 'Sent to Intervals');
       assert.doesNotMatch(await text(page, 'coachat-review'), /Synced to Garmin/i);
@@ -170,31 +170,33 @@ async function main() {
       assert.equal(mock.calls.some((call) => /workouts\/.+\/(approve|sync)/.test(call)), false);
     }
 
-    // Partial failure: published stays published, Retry Sync only syncs.
+    // Partial sync failure leaves the session unpublished; retry syncs, then performs the one public build.
     {
       const page = await fresh(); const mock = newMock({ failSync: true });
       await open(page, base, mock, envelope());
       await page.click('#btn-save-publish');
       await page.waitForFunction(() => document.getElementById('workout-status-badge')?.textContent === 'Sync failed');
-      assert.equal(await text(page, 'session-status-badge'), 'Published');
+      assert.equal(await text(page, 'session-status-badge'), 'Draft');
       assert.equal(await page.locator('#btn-retry-sync').isVisible(), true);
       mock.failSync = false;
       await page.click('#btn-retry-sync');
       await page.waitForFunction(() => document.getElementById('workout-status-badge')?.textContent === 'Sent to Intervals');
-      assert.equal(count(mock, 'POST /api/editor/save-and-publish'), 1, 'retry must not republish');
+      await page.waitForFunction(() => document.getElementById('session-status-badge')?.textContent === 'Published');
+      assert.equal(count(mock, 'POST /api/editor/save-and-publish'), 1, 'retry publishes only after the workout is synchronized');
       assert.equal(count(mock, 'POST /api/editor/save'), 0);
       assert.equal(mock.workouts.length, 1);
       assert.equal(await page.locator('#btn-retry-sync').isVisible(), false);
     }
 
-    // Publish failure stops before approve/sync and is shown (and persisted) as Failed.
+    // Publish failure follows an already synchronized workout and is shown (and persisted) as Failed.
     {
       const page = await fresh(); const mock = newMock({ failPublish: true });
       await open(page, base, mock, envelope());
       await page.click('#btn-save-publish');
       await page.waitForFunction(() => document.getElementById('session-status-badge')?.textContent === 'Failed');
-      assert.equal(mock.calls.some((call) => /approve|sync/.test(call)), false);
-      assert.equal(mock.workouts[0].lifecycle.approvalStatus, 'proposed');
+      assert.equal(mock.calls.some((call) => /approve/.test(call)), true);
+      assert.equal(mock.calls.some((call) => /sync/.test(call)), true);
+      assert.equal(mock.workouts[0].lifecycle.syncStatus, 'synced');
       await page.reload();
       await page.waitForFunction(() => document.getElementById('session-status-badge')?.textContent === 'Failed');
     }

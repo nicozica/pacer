@@ -1288,7 +1288,7 @@ function runKey(rawText) {
   return `${currentEditorSession?.selectedSourceActivityId ?? ''}\n${rawText}`;
 }
 
-const PIPELINE_STEPS = ['session', 'workout', 'publish', 'approve', 'sync'];
+const PIPELINE_STEPS = ['session', 'workout', 'approve', 'sync', 'publish'];
 
 function newCoachatRun(rawText, mode) {
   return {
@@ -1418,14 +1418,14 @@ const STEP_RUNNERS = {
   },
 };
 
-// Draft: save + store the proposal. Publish: store the proposal, publish (which saves the reviewed
-// analysis), then approve and sync. The primary button is the user's explicit approval of the workout.
+// Draft: save + store the proposal. Publish: store, approve and sync the proposal before the single
+// public build, so its Next Run snapshot sees the authoritative lifecycle state.
 function plannedSteps(mode, target) {
   if (mode === 'draft') return target.pasted ? ['session', 'workout'] : ['session'];
   const steps = [];
   if (target.pasted) steps.push('workout');
-  steps.push('publish');
   if (target.hasWorkout) steps.push('approve', 'sync');
+  steps.push('publish');
   return steps;
 }
 
@@ -1454,7 +1454,7 @@ function summariseRun(run, mode, envelopeOrWorkout) {
     const done = run.planned.filter((step) => run.state[step] === 'ok');
     const names = { session: 'session saved', workout: 'workout stored', approve: 'workout approved', sync: 'sent to Intervals.icu', publish: run.publishSkipped ? 'already published' : 'published' };
     const failedNames = { session: 'saving the session', workout: 'storing the workout', approve: 'approving the workout', sync: 'sending to Intervals.icu', publish: 'publishing' };
-    const again = failedStep === 'sync' || failedStep === 'approve' ? 'Use Retry Sync; the session is not republished.' : 'Click again to resume; completed steps are not repeated.';
+    const again = failedStep === 'sync' || failedStep === 'approve' ? 'Use Retry Sync; publishing runs after synchronization.' : 'Click again to resume; completed steps are not repeated.';
     showError(`Stopped at ${failedNames[failedStep]}. ${done.length ? `Done: ${done.map((step) => names[step]).join(', ')}. ` : 'Nothing was changed. '}${again}`);
   } else if (mode === 'publish') {
     const status = run.publishInfo;
@@ -1569,7 +1569,7 @@ async function importStandaloneWorkout() {
   }
 }
 
-/** Approve (idempotent) and send an already-stored workout. Never saves or publishes the session. */
+/** Resume approval/sync; a failed pre-publication run performs its single deferred public build after sync. */
 async function retrySync(allowUnapproved = false) {
   if (saveInFlight) return;
   const target = reviewTarget();
@@ -1579,7 +1579,8 @@ async function retrySync(allowUnapproved = false) {
   saveInFlight = true;
   setButtonsDisabled(true);
   const run = newCoachatRun('', 'sync');
-  run.planned = ['approve', 'sync'];
+  const shouldPublish = currentEditorSession?.publication?.state !== 'published' && currentAiImport?.kind === 'envelope';
+  run.planned = shouldPublish ? ['approve', 'sync', 'publish'] : ['approve', 'sync'];
   run.workoutId = target.record.workout.pacerWorkoutId;
   activeRun = run;
   try {
@@ -1588,7 +1589,7 @@ async function retrySync(allowUnapproved = false) {
       renderCoachatResult(run);
       renderReviewStatus();
       try {
-        await STEP_RUNNERS[step](run, {});
+        await STEP_RUNNERS[step](run, { payload: collectEditorPayload(), skipPublish: false });
         run.state[step] = 'ok';
       } catch (err) {
         run.state[step] = 'failed';
@@ -1599,8 +1600,8 @@ async function retrySync(allowUnapproved = false) {
     run.current = '';
     renderCoachatResult(run);
     await window.PacerWorkouts?.reload();
-    if (run.failed()) showError(`Sync failed: ${run.error.sync || run.error.approve} The session publication was not changed.`);
-    else showNotice('Workout sent to Intervals.icu. The session was not republished.');
+    if (run.failed()) showError(`Sync failed: ${run.error.sync || run.error.approve || run.error.publish} The session publication was not changed.`);
+    else showNotice(shouldPublish ? 'Workout sent to Intervals.icu and session published.' : 'Workout sent to Intervals.icu. The session was not republished.');
   } finally {
     activeRun = null;
     saveInFlight = false;
