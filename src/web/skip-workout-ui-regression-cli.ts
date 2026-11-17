@@ -263,7 +263,8 @@ async function main() {
       // Home: new Next workout; skipped one in history only.
       await page.click('.meta-link');
       await page.waitForFunction(() => /Recovery shakeout/.test(document.getElementById('coachat-workout-preview')?.textContent || ''));
-      assert.match(await text(page, '#skipped-workouts'), /Easy run/);
+      await page.waitForFunction(() => document.getElementById('btn-save-publish') !== null);
+      assert.equal(await page.locator('#skipped-workouts').count(), 0, 'no skipped history block on home');
     }
 
     // Reopen an existing skip: persisted record is authoritative, no re-confirmation, copy uses stored brief.
@@ -613,6 +614,19 @@ async function main() {
       assert.equal(await page.locator('[data-skip-action="publish"]').count(), 0);
       assert.doesNotMatch(await text(page, '#workout-skip-actions'), /Publish/i);
       assert.deepEqual(writes(mock), [], 'nothing is written or published on load');
+      // Skipped history is not shown on home at all (the skip record still exists and is reachable by its URL).
+      const review = await text(page, '#coachat-review');
+      assert.doesNotMatch(review, /Skipped workouts|Open skip page|Copy Skip Training Brief|Details, recovery snapshot/i);
+      assert.equal(await page.locator('#skipped-workouts, .skipped-workout, [data-skip-details], [data-skip-action="copy"]').count(), 0);
+      // Publish actions directly follow the two-column preview grid (no leftover block between them).
+      assert.equal(await page.evaluate(() => document.querySelector('.coachat-preview-grid')?.nextElementSibling?.classList.contains('save-actions')), true);
+      assert.equal(await page.locator('#coachat-review > *').evaluateAll((els) => els.filter((el) => (el as HTMLElement).offsetHeight === 0 && !el.classList.contains('hidden') && el.id !== 'coachat-result' && el.id !== 'save-banner').length), 0, 'no empty elements take up space');
+      // The active workout keeps its Skip workout… link, and the dedicated page still shows the stored skip.
+      const link = page.locator('[data-skip-action="open"]');
+      assert.equal(await link.count(), 1, 'the active workout keeps its Skip workout… link');
+      assert.match(await link.getAttribute('href') || '', new RegExp(`/skip/\\?id=${NEW_ID}`));
+      await page.goto(`${base}skip/?id=${ID}`);
+      await page.waitForFunction(() => document.getElementById('skip-page-status')?.textContent === 'Skipped');
     }
 
     // Reopening an already-skipped workout (draft gone): the synced Next workout can be re-published without repeating anything.

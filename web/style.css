@@ -710,20 +710,7 @@ button:disabled {
 .skip-actions { margin-top: 0.4rem; display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; }
 .status-badge.is-skipped { background: #f2f3f5; color: var(--text-muted); }
 .status-badge.is-conflict { border-color: rgba(154, 61, 24, 0.35); background: #fdf1ea; color: #8a3414; }
-.skipped-workouts { display: grid; gap: 0.6rem; }
-.skipped-workouts h4 { margin: 0; color: var(--text-muted); font-size: 0.72rem; letter-spacing: 0.06em; text-transform: uppercase; }
-.skipped-workout { display: grid; gap: 0.45rem; padding: 0.6rem 0.84rem; border: 1px solid var(--border); border-radius: 9px; background: #fafbfc; }
-.skipped-workout.has-conflict { border-color: rgba(154, 61, 24, 0.35); }
-.skipped-title { color: var(--text-strong); font-size: 0.92rem; font-weight: 700; overflow-wrap: anywhere; }
-.skipped-meta, .skip-note { color: var(--text-muted); font-size: 0.82rem; margin: 0; }
-.skipped-actions { align-items: center; }
-.skipped-actions .field-help { margin: 0; }
-.skipped-workout summary { cursor: pointer; color: var(--text-muted); font-size: 0.82rem; }
-.skip-detail-body { display: grid; gap: 0.4rem; padding-top: 0.5rem; font-size: 0.86rem; }
-.skip-detail-body p { margin: 0; }
-.skip-detail-body h5 { margin: 0.4rem 0 0.1rem; color: var(--text-muted); font-size: 0.72rem; letter-spacing: 0.06em; text-transform: uppercase; }
-.skip-detail-body h5 small { text-transform: none; letter-spacing: 0; font-weight: 400; }
-.skip-brief { width: 100%; box-sizing: border-box; font-family: 'Courier New', Courier, monospace; font-size: 0.8rem; background: #fbfbfc; }
+.skip-note { color: var(--text-muted); font-size: 0.82rem; margin: 0; }
 .skip-conflict { margin: 0; padding: 0.45rem 0.7rem; border: 1px solid rgba(154, 61, 24, 0.35); border-radius: 6px; background: #fdf1ea; color: #8a3414; font-size: 0.84rem; }
 
 .skip-link { display: inline-block; padding: 0.4rem 0.35rem; border-radius: 6px; color: var(--text-muted); font-size: 0.85rem; font-weight: 500; text-decoration: none; }

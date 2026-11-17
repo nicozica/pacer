@@ -725,8 +725,8 @@ function renderReviewStatus() {
     failed: `Not on your calendar. ${target.error} Use Retry Sync.`,
     approved: 'Approved but not on your calendar yet. Use Retry Sync.',
     superseded: 'Replaced by a newer revision. It won’t be sent.',
-    skipped: 'Skipped. It won’t be sent or synced. Details are under Skipped workouts.',
-    conflict: 'Skipped, but an activity was later completed for it. Review under Skipped workouts.',
+    skipped: 'Skipped. It won’t be sent or synced.',
+    conflict: 'Skipped, but an activity was later completed for it. Nothing was changed.',
   }[target.status];
   if (target.standalone && target.record && target.canApproveSync && !target.skipped) {
     note.textContent = target.status === 'approved' || target.status === 'failed'
