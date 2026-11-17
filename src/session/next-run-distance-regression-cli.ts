@@ -14,43 +14,30 @@ async function main(): Promise<void> {
     const { importFutureWorkoutProposal } = await import('../workouts/contract');
     const { publishSnapshots } = await import('./service');
     store.initSessionStore();
-
     const saved = store.saveStoredSession({
       core: { sessionDate: '2026-10-18', startDateLocal: '2026-10-18T08:00:00', title: 'Long Run', sport: 'Run', source: 'test', sourceActivityId: 198651687, distanceM: 12700, movingTimeS: 4800, elapsedTimeS: 4800, paceSecPerKm: 378, hrAvg: 150, hrMax: 178, elevationM: null, weatherTempC: null, weatherCondition: null, weatherWindKmh: null, polyline: null, city: null },
-      manual: { sessionType: 'Long Run', legs: 'Normal', sleepScore: null, restedness: '3 - Normal', extraNotes: '' },
-      files: { tcxFilename: '', tcxAttached: false, briefFilename: '' },
-      ai: { signalTitle: 'Signal', signalParagraphs: ['Paragraph.'], carryForward: 'Keep it easy.', nextRunTitle: 'Tuesday easy', nextRunSummary: 'Stay relaxed.', nextRunDurationMin: 45, nextRunDurationMax: 45, nextRunDistanceKm: null, nextRunPaceMinSecPerKm: 395, nextRunPaceMaxSecPerKm: 440, nextRunWorkout: { title: 'Easy Run', type: 'Easy Run', blocks: ['Human-readable text is not parsed.'] }, weekTitle: 'Week', weekSummary: 'Summary', modelName: null, promptVersion: null, generatedAt: null },
-      laps: [],
+      manual: { sessionType: 'Long Run', legs: 'Normal', sleepScore: null, restedness: '3 - Normal', extraNotes: '' }, files: { tcxFilename: '', tcxAttached: false, briefFilename: '' },
+      ai: { signalTitle: 'Signal', signalParagraphs: ['Paragraph.'], carryForward: 'Keep it easy.', nextRunTitle: 'Conversational Long Run', nextRunSummary: 'Historical editorial guidance must not replace the current plan.', nextRunDurationMin: 80, nextRunDurationMax: 80, nextRunDistanceKm: null, nextRunPaceMinSecPerKm: null, nextRunPaceMaxSecPerKm: null, nextRunWorkout: { title: 'Conversational Long Run', type: 'Long Run', blocks: ['Historical text.'] }, weekTitle: 'Week', weekSummary: 'Summary', modelName: null, promptVersion: null, generatedAt: null }, laps: [],
     });
     store.markSessionPublished(saved.core.id, '2026-10-19T00:00:00.000Z');
-
-    const proposal = importFutureWorkoutProposal({
-      contractVersion: 'future-workout-v1', proposalKey: 'easy-run-test', proposalRevision: 1,
-      proposedAt: '2026-10-19T00:00:00.000Z', updatedAt: '2026-10-19T00:00:00.000Z',
-      sourceSession: { sourceActivityId: 198651687, sessionDate: '2026-10-18' },
-      schedule: { localDate: '2026-10-20', timezone: 'America/Argentina/Buenos_Aires' },
-      workoutType: 'Easy Run', title: 'Easy Run', coachingNotes: '',
-      blocks: [
-        { kind: 'warmup', duration: { unit: 'time', seconds: 600 }, target: { kind: 'pace', minSecPerKm: 420, maxSecPerKm: 440 } },
-        { kind: 'work', duration: { unit: 'time', seconds: 1800 }, target: { kind: 'pace', minSecPerKm: 395, maxSecPerKm: 430 } },
-        { kind: 'cooldown', duration: { unit: 'time', seconds: 300 }, target: { kind: 'pace', minSecPerKm: 420, maxSecPerKm: 440 } },
-      ],
-      lifecycle: { approvalStatus: 'proposed', approvedAt: null, approvalNote: null, syncStatus: 'not_requested', syncedAt: null, intervalsEventId: null, lastSyncError: null },
+    const proposal = (proposalKey: string, localDate: string, title: string) => importFutureWorkoutProposal({
+      contractVersion: 'future-workout-v1', proposalKey, proposalRevision: 1, proposedAt: '2026-10-19T00:00:00.000Z', updatedAt: '2026-10-19T00:00:00.000Z', sourceSession: { sourceActivityId: 198651687, sessionDate: '2026-10-18' }, schedule: { localDate, timezone: 'America/Argentina/Buenos_Aires' }, workoutType: 'Easy Run', title, coachingNotes: '',
+      blocks: [{ kind: 'warmup', duration: { unit: 'time', seconds: 600 }, target: { kind: 'pace', minSecPerKm: 420, maxSecPerKm: 440 } }, { kind: 'work', duration: { unit: 'time', seconds: 1800 }, target: { kind: 'pace', minSecPerKm: 395, maxSecPerKm: 430 } }, { kind: 'cooldown', duration: { unit: 'time', seconds: 300 }, target: { kind: 'pace', minSecPerKm: 420, maxSecPerKm: 440 } }], lifecycle: { approvalStatus: 'proposed', approvedAt: null, approvalNote: null, syncStatus: 'not_requested', syncedAt: null, intervalsEventId: null, lastSyncError: null },
     });
-    store.importStoredFutureWorkout(proposal);
-
-    assert.equal(publishSnapshots().nextRun?.distanceKm, 6.5, 'export derives an estimate from structured future-workout blocks rather than human-readable text');
-
-    const Database = require('better-sqlite3');
-    const db = new Database(process.env.DATABASE_FILE);
-    db.prepare('UPDATE session_ai SET next_run_distance_km=? WHERE session_id=?').run(7.2, saved.core.id);
-    db.close();
-    assert.equal(publishSnapshots().nextRun?.distanceKm, 7.2, 'an explicit distance remains authoritative');
-  } finally {
-    fs.rmSync(tempDir, { recursive: true, force: true });
-  }
-
-  console.log('Next-run structured distance export regression checks passed.');
+    const skipped = proposal('skipped-long-run', '2099-01-01', 'Conversational Long Run');
+    store.importStoredFutureWorkout(skipped); store.approveStoredFutureWorkout(skipped.pacerWorkoutId); store.finishFutureWorkoutSync(skipped.pacerWorkoutId, 'old-event');
+    store.createStoredFutureWorkoutSkip({ pacerWorkoutId: skipped.pacerWorkoutId, skippedAt: '2026-11-14T12:00:00.000Z', explanation: 'Private', wellnessSnapshot: { availability: { intervals: 'unavailable', garmin: 'not_enabled' }, intervals: null, garmin: null }, wellnessCollectedAt: '2026-11-14T12:00:00.000Z', wellnessProvenance: {}, planningAnchor: null });
+    const replacement = proposal('easy-reset', '2099-01-02', 'Easy Aerobic Reset');
+    store.importStoredFutureWorkout(replacement); store.approveStoredFutureWorkout(replacement.pacerWorkoutId); store.finishFutureWorkoutSync(replacement.pacerWorkoutId, 'replacement-event');
+    const first = publishSnapshots().nextRun;
+    assert.equal(first?.title, 'Easy Aerobic Reset', 'current approved/synced replacement wins over historical session advice and skipped workouts');
+    assert.equal(first?.distanceKm, 6.5, 'the current structured workout supplies its own estimated distance');
+    assert.doesNotMatch(JSON.stringify(first), /2099|scheduled|Private|skip|wellness/i, 'the public snapshot excludes future schedule and private skip context');
+    assert.deepEqual(publishSnapshots().nextRun, first, 'rebuilding snapshots cannot resurrect the skipped workout');
+    store.createStoredFutureWorkoutSkip({ pacerWorkoutId: replacement.pacerWorkoutId, skippedAt: '2026-11-15T12:00:00.000Z', explanation: null, wellnessSnapshot: { availability: { intervals: 'unavailable', garmin: 'not_enabled' }, intervals: null, garmin: null }, wellnessCollectedAt: '2026-11-15T12:00:00.000Z', wellnessProvenance: {}, planningAnchor: null });
+    assert.equal(publishSnapshots().nextRun, null, 'missing eligible current data never falls back to historical next-run advice');
+  } finally { fs.rmSync(tempDir, { recursive: true, force: true }); }
+  console.log('Current Next Run snapshot regression checks passed.');
 }
 
 main().catch((error) => { console.error(error); process.exitCode = 1; });

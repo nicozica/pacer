@@ -815,36 +815,6 @@ function buildLatestExport(session: StoredSession, sourceActivity: SourceActivit
   };
 }
 
-function buildNextRunExport(session: StoredSession): SessionExportNextRun | null {
-  if (!session.ai.nextRunTitle && !session.ai.nextRunSummary) return null;
-  const workout = withNextRunWorkoutTitle(session.ai.nextRunWorkout, session.ai.nextRunTitle);
-  const explicitDistanceKm = session.ai.nextRunDistanceKm;
-  const plannedWorkout = explicitDistanceKm === null
-    ? listStoredFutureWorkouts().find(({ workout: candidate }) => candidate.sourceSession.sourceActivityId === session.core.sourceActivityId
-      && candidate.sourceSession.sessionDate === session.core.sessionDate
-      && candidate.lifecycle.approvalStatus !== 'rejected'
-      && candidate.lifecycle.approvalStatus !== 'superseded')
-    : null;
-  const distanceKm = explicitDistanceKm ?? (plannedWorkout
-    ? estimateFutureWorkoutDistanceKm(plannedWorkout.workout.blocks)
-    : null);
-
-  return {
-    fromSessionId: session.core.id,
-    sessionDate: session.core.sessionDate,
-    title: session.ai.nextRunTitle,
-    summary: compactNextRunSummary(session.ai.nextRunSummary, workout),
-    type: workout?.type ?? null,
-    durationMin: session.ai.nextRunDurationMin,
-    durationMax: session.ai.nextRunDurationMax,
-    distanceKm,
-    paceMinSecPerKm: session.ai.nextRunPaceMinSecPerKm,
-    paceMaxSecPerKm: session.ai.nextRunPaceMaxSecPerKm,
-    ...(workout ? { workout } : {}),
-    updatedAt: session.core.updatedAt,
-  };
-}
-
 function publicWorkoutDurationMinutes(workout: FutureWorkoutProposal): number | null {
   let seconds = 0;
   for (const block of workout.blocks) {
@@ -887,20 +857,22 @@ function localToday(timeZone: string): string {
   } catch { return new Date().toISOString().slice(0, 10); }
 }
 
-/** Rewrites only the public next-run snapshot; completed-session exports and historical metrics are untouched. */
-export function refreshPublicNextRunSnapshot(expectedWorkoutId?: string): SessionExportNextRun {
-  initSessionStore();
-  const publishedSessions = listPublishedSessions();
-  const latestSession = publishedSessions[0];
-  if (!latestSession) throw new Error('A published completed session is required before refreshing the public Next Run.');
-  const workouts = listStoredFutureWorkouts();
+/**
+ * Public Next Run is always a current, eligible planned workout. Completed-session
+ * editorial advice is deliberately not a fallback: it can refer to a workout that
+ * has since been skipped, cancelled, or superseded.
+ */
+function buildCurrentPublicNextRun(
+  latestSession: StoredSession | null,
+  workouts: ReturnType<typeof listStoredFutureWorkouts>,
+): SessionExportNextRun | null {
+  if (!latestSession) return null;
   const timezone = workouts[0]?.workout.schedule.timezone ?? 'UTC';
   const workout = selectPublicNextWorkout(workouts, localToday(timezone));
-  if (!workout) throw new Error('No eligible approved and synchronized future workout is available for public Next Run.');
-  if (expectedWorkoutId && workout.pacerWorkoutId !== expectedWorkoutId) throw new Error('Only the current eligible Next workout can be published.');
+  if (!workout) return null;
   const durationMin = publicWorkoutDurationMinutes(workout);
   const pace = publicWorkoutPaceRange(workout);
-  const nextRun: SessionExportNextRun = {
+  return {
     fromSessionId: latestSession.core.id,
     sessionDate: latestSession.core.sessionDate,
     title: workout.title,
@@ -914,6 +886,21 @@ export function refreshPublicNextRunSnapshot(expectedWorkoutId?: string): Sessio
     workout: { title: workout.title, type: workout.workoutType, blocks: formatFutureWorkoutStructure(workout.blocks) },
     updatedAt: workout.updatedAt,
   };
+}
+
+/** Rewrites only the public next-run snapshot; completed-session exports and historical metrics are untouched. */
+export function refreshPublicNextRunSnapshot(expectedWorkoutId?: string): SessionExportNextRun {
+  initSessionStore();
+  const publishedSessions = listPublishedSessions();
+  const latestSession = publishedSessions[0];
+  if (!latestSession) throw new Error('A published completed session is required before refreshing the public Next Run.');
+  const workouts = listStoredFutureWorkouts();
+  const timezone = workouts[0]?.workout.schedule.timezone ?? 'UTC';
+  const workout = selectPublicNextWorkout(workouts, localToday(timezone));
+  if (!workout) throw new Error('No eligible approved and synchronized future workout is available for public Next Run.');
+  if (expectedWorkoutId && workout.pacerWorkoutId !== expectedWorkoutId) throw new Error('Only the current eligible Next workout can be published.');
+  const nextRun = buildCurrentPublicNextRun(latestSession, workouts);
+  if (!nextRun) throw new Error('No eligible approved and synchronized future workout is available for public Next Run.');
   writeJsonFile('next-run.json', nextRun);
   return nextRun;
 }
@@ -1454,7 +1441,7 @@ export function publishSnapshots(): PublishArtifacts {
   };
   const publishedSessionExports = publishedSessions.map((session) => buildLatestExport(session, findSourceActivity(session)));
   const latestExport = latestSession ? buildLatestExport(latestSession, findSourceActivity(latestSession)) : null;
-  const nextRunExport = latestSession ? buildNextRunExport(latestSession) : null;
+  const nextRunExport = buildCurrentPublicNextRun(latestSession, listStoredFutureWorkouts());
   const snapshotDraft = buildWeeklySnapshotFromSessions(publishedSessions);
   const weeklySummary = snapshotDraft ? upsertWeeklySnapshot(snapshotDraft) : null;
   const archiveList = buildArchiveList(publishedSessions.slice(1));
