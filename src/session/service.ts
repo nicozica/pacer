@@ -60,6 +60,7 @@ import {
   WeeklyBar,
   WeeklySnapshotRecord,
 } from './types';
+import type { StoredFutureWorkout } from './storage';
 import { buildRouteMetadata } from './route';
 import { ensureDir } from '../utils/storage';
 import { deployRunSite } from './deploy';
@@ -290,6 +291,48 @@ function getActivitySessionTypeSuggestion(activity: SourceActivity): string | nu
   return null;
 }
 
+function activityLocalDate(activity: SourceActivity): string | null {
+  const value = activity.start_date_local || activity.start_date;
+  return /^\d{4}-\d{2}-\d{2}/.test(value) ? value.slice(0, 10) : null;
+}
+
+function sameActivityTitle(left: string | null | undefined, right: string): boolean {
+  return typeof left === 'string' && left.trim().toLocaleLowerCase() === right.trim().toLocaleLowerCase();
+}
+
+/**
+ * Supplies only the canonical planned type for an unsaved completed run. A direct
+ * Intervals pairing is authoritative. When Intervals explicitly has no pairing,
+ * the fallback requires one active plan, one completed run on that date, and the
+ * exact planned title; it never persists or reclassifies the activity.
+ */
+export function getPlannedWorkoutSessionTypeSuggestion(
+  activity: SourceActivity,
+  activities: SourceActivity[],
+  workouts: StoredFutureWorkout[],
+): string | null {
+  if (!isRunLike(activity)) return null;
+  const active = workouts.filter(({ workout, skip }) => !skip
+    && workout.lifecycle.approvalStatus === 'approved'
+    && workout.lifecycle.syncStatus === 'synced'
+    && Boolean(workout.lifecycle.intervalsEventId));
+  const paired = activity.pairedEventId === null || activity.pairedEventId === undefined
+    ? []
+    : active.filter(({ workout }) => String(workout.lifecycle.intervalsEventId) === String(activity.pairedEventId));
+  if (paired.length === 1) return getCanonicalSessionType(paired[0].workout.workoutType);
+  if (activity.pairedEventId !== null && activity.pairedEventId !== undefined) return null;
+
+  const date = activityLocalDate(activity);
+  if (!date) return null;
+  const plannedOnDate = active.filter(({ workout }) => workout.schedule.localDate === date);
+  const runsOnDate = activities.filter((candidate) => isRunLike(candidate) && activityLocalDate(candidate) === date);
+  if (plannedOnDate.length !== 1 || runsOnDate.length !== 1) return null;
+  const planned = plannedOnDate[0].workout;
+  const titleMatches = [activity.displayActivityName, activity.rawActivityName, activity.name]
+    .some((title) => sameActivityTitle(title, planned.title));
+  return titleMatches ? getCanonicalSessionType(planned.workoutType) : null;
+}
+
 function getActivityWorkoutCode(activity: SourceActivity): string | null {
   return activity.workoutCode ?? buildActivityNameMetadata(activity.name, getActivityType(activity)).workoutCode;
 }
@@ -405,7 +448,7 @@ function sanitizeNextRunWorkout(value: unknown): SessionNextRunWorkout | null {
   };
 }
 
-function buildRecentRunOptions(bundle: ActivityBundle): RecentRunOption[] {
+function buildRecentRunOptions(bundle: ActivityBundle, workouts = listStoredFutureWorkouts()): RecentRunOption[] {
   const savedSessions = new Map(
     listStoredSessionSummaries().map((session) => [session.sourceActivityId, session]),
   );
@@ -432,7 +475,8 @@ function buildRecentRunOptions(bundle: ActivityBundle): RecentRunOption[] {
         rawActivityName: getActivityRawName(activity),
         displayActivityName: getActivityTitle(activity),
         workoutCode: getActivityWorkoutCode(activity),
-        sessionTypeSuggestion: getActivitySessionTypeSuggestion(activity),
+        sessionTypeSuggestion: getPlannedWorkoutSessionTypeSuggestion(activity, bundle.activities, workouts)
+          ?? getActivitySessionTypeSuggestion(activity),
         distanceKm: formatDistanceKm(activity.distance),
         movingTimeLabel: formatDuration(activity.moving_time),
         savedSessionId: resolvedSaved?.sessionId ?? null,
@@ -442,7 +486,12 @@ function buildRecentRunOptions(bundle: ActivityBundle): RecentRunOption[] {
     });
 }
 
-function buildSourceSummary(bundle: ActivityBundle, activity: SourceActivity, stored: StoredSession | null): SessionSourceSummary {
+function buildSourceSummary(
+  bundle: ActivityBundle,
+  activity: SourceActivity,
+  stored: StoredSession | null,
+  workouts = listStoredFutureWorkouts(),
+): SessionSourceSummary {
   const sessionDate = (activity.start_date_local || activity.start_date).slice(0, 10);
   const paceSecPerKm = paceSecPerKmFromSpeed(activity.average_speed);
   const weatherTemp = stored?.core.weatherTempC ?? getActivityTempFromBundle(bundle, activity.id ?? -1);
@@ -459,7 +508,8 @@ function buildSourceSummary(bundle: ActivityBundle, activity: SourceActivity, st
     rawActivityName: getActivityRawName(activity),
     displayActivityName: getActivityTitle(activity),
     workoutCode: getActivityWorkoutCode(activity),
-    sessionTypeSuggestion: getActivitySessionTypeSuggestion(activity),
+    sessionTypeSuggestion: getPlannedWorkoutSessionTypeSuggestion(activity, bundle.activities, workouts)
+      ?? getActivitySessionTypeSuggestion(activity),
     sport: getActivityType(activity),
     source: bundle.source,
     distanceKm: formatDistanceKm(activity.distance),
@@ -489,11 +539,16 @@ function describePublication(stored: StoredSession | null): EditorSession['publi
   return { state: 'published', publishedAt, attemptedAt: attempt?.attemptedAt ?? null, message: attempt?.message ?? null };
 }
 
-async function buildEditorSession(bundle: ActivityBundle, sourceActivityId: number): Promise<EditorSession> {
+async function buildEditorSession(
+  bundle: ActivityBundle,
+  sourceActivityId: number,
+  workouts = listStoredFutureWorkouts(),
+): Promise<EditorSession> {
   const resolvedSource = await resolveSourceActivity(bundle, sourceActivityId);
   const activity = resolvedSource.activity;
   const { session: stored } = findStoredSessionForActivity(activity);
-  const suggestedSessionType = getActivitySessionTypeSuggestion(activity);
+  const suggestedSessionType = getPlannedWorkoutSessionTypeSuggestion(activity, bundle.activities, workouts)
+    ?? getActivitySessionTypeSuggestion(activity);
   const suggestedManual = suggestedSessionType
     ? { ...blankManual(), sessionType: suggestedSessionType }
     : blankManual();
@@ -512,7 +567,7 @@ async function buildEditorSession(bundle: ActivityBundle, sourceActivityId: numb
     selectedSourceActivityId: sourceActivityId,
     publication: describePublication(stored),
     savedSessionId: stored?.core.id ?? null,
-    source: buildSourceSummary(bundle, activity, stored),
+    source: buildSourceSummary(bundle, activity, stored, workouts),
     manual: stored?.manual
       ? {
         ...stored.manual,
@@ -1291,11 +1346,12 @@ export async function getEditorBootstrap(sourceActivityId: number | null = null)
   }
 
   const selectedSourceActivityId = selectDefaultSourceActivityId(bundle, sourceActivityId);
-  const recentRuns = buildRecentRunOptions(bundle);
+  const workouts = listStoredFutureWorkouts();
+  const recentRuns = buildRecentRunOptions(bundle, workouts);
 
   return {
     recentRuns,
-    selectedSession: selectedSourceActivityId === null ? null : await buildEditorSession(bundle, selectedSourceActivityId),
+    selectedSession: selectedSourceActivityId === null ? null : await buildEditorSession(bundle, selectedSourceActivityId, workouts),
     latestPublishedAt: getLatestPublishedDate() ?? getLatestWeeklySnapshot()?.snapshotDate ?? null,
   };
 }
