@@ -34,7 +34,16 @@ async function main(): Promise<void> {
     assert.equal(first?.distanceKm, 6.5, 'the current structured workout supplies its own estimated distance');
     assert.doesNotMatch(JSON.stringify(first), /2099|scheduled|Private|skip|wellness/i, 'the public snapshot excludes future schedule and private skip context');
     assert.deepEqual(publishSnapshots().nextRun, first, 'rebuilding snapshots cannot resurrect the skipped workout');
+    const future = proposal('controlled-tempo', '2099-01-03', 'Controlled Tempo Blocks');
+    store.importStoredFutureWorkout(future); store.approveStoredFutureWorkout(future.pacerWorkoutId); store.finishFutureWorkoutSync(future.pacerWorkoutId, 'future-event');
+    const activitiesPath = path.join(tempDir, 'json', 'activities.latest.json');
+    fs.mkdirSync(path.dirname(activitiesPath), { recursive: true });
+    fs.writeFileSync(activitiesPath, JSON.stringify({ source: 'intervals', activities: [{ id: 77, name: 'Run', displayActivityName: 'Run', rawActivityName: 'Run', pairedEventId: 'replacement-event', distance: 6500, moving_time: 2700, total_elevation_gain: 0, type: 'Run', sport_type: 'Run', start_date: '2099-01-02T09:00:00Z', start_date_local: '2099-01-02T06:00:00' }] }));
+    assert.equal(publishSnapshots().nextRun?.title, 'Controlled Tempo Blocks', 'a verified paired completion removes its planned workout from public Next Run eligibility');
+    fs.writeFileSync(activitiesPath, JSON.stringify({ source: 'intervals', activities: [{ id: 77, name: 'Easy Aerobic Reset', displayActivityName: 'Easy Aerobic Reset', rawActivityName: 'Easy Aerobic Reset', pairedEventId: null, distance: 6500, moving_time: 2700, total_elevation_gain: 0, type: 'Run', sport_type: 'Run', start_date: '2099-01-02T09:00:00Z', start_date_local: '2099-01-02T06:00:00' }] }));
+    assert.equal(publishSnapshots().nextRun?.title, 'Controlled Tempo Blocks', 'a guarded null-pair completion removes its exact-title planned workout without inventing a pairing');
     store.createStoredFutureWorkoutSkip({ pacerWorkoutId: replacement.pacerWorkoutId, skippedAt: '2026-11-15T12:00:00.000Z', explanation: null, wellnessSnapshot: { availability: { intervals: 'unavailable', garmin: 'not_enabled' }, intervals: null, garmin: null }, wellnessCollectedAt: '2026-11-15T12:00:00.000Z', wellnessProvenance: {}, planningAnchor: null });
+    store.createStoredFutureWorkoutSkip({ pacerWorkoutId: future.pacerWorkoutId, skippedAt: '2026-11-15T12:00:00.000Z', explanation: null, wellnessSnapshot: { availability: { intervals: 'unavailable', garmin: 'not_enabled' }, intervals: null, garmin: null }, wellnessCollectedAt: '2026-11-15T12:00:00.000Z', wellnessProvenance: {}, planningAnchor: null });
     assert.equal(publishSnapshots().nextRun, null, 'missing eligible current data never falls back to historical next-run advice');
   } finally { fs.rmSync(tempDir, { recursive: true, force: true }); }
   console.log('Current Next Run snapshot regression checks passed.');

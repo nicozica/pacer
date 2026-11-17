@@ -301,16 +301,15 @@ function sameActivityTitle(left: string | null | undefined, right: string): bool
 }
 
 /**
- * Supplies only the canonical planned type for an unsaved completed run. A direct
- * Intervals pairing is authoritative. When Intervals explicitly has no pairing,
- * the fallback requires one active plan, one completed run on that date, and the
- * exact planned title; it never persists or reclassifies the activity.
+ * Matches a completed run to an active planned workout without persisting a
+ * pairing. A direct Intervals pairing is authoritative; the null-pair fallback
+ * requires one active plan, one completed run on that date, and the exact title.
  */
-export function getPlannedWorkoutSessionTypeSuggestion(
+function findCompletedPlannedWorkout(
   activity: SourceActivity,
   activities: SourceActivity[],
   workouts: StoredFutureWorkout[],
-): string | null {
+): StoredFutureWorkout | null {
   if (!isRunLike(activity)) return null;
   const active = workouts.filter(({ workout, skip }) => !skip
     && workout.lifecycle.approvalStatus === 'approved'
@@ -319,7 +318,7 @@ export function getPlannedWorkoutSessionTypeSuggestion(
   const paired = activity.pairedEventId === null || activity.pairedEventId === undefined
     ? []
     : active.filter(({ workout }) => String(workout.lifecycle.intervalsEventId) === String(activity.pairedEventId));
-  if (paired.length === 1) return getCanonicalSessionType(paired[0].workout.workoutType);
+  if (paired.length === 1) return paired[0];
   if (activity.pairedEventId !== null && activity.pairedEventId !== undefined) return null;
 
   const date = activityLocalDate(activity);
@@ -330,7 +329,30 @@ export function getPlannedWorkoutSessionTypeSuggestion(
   const planned = plannedOnDate[0].workout;
   const titleMatches = [activity.displayActivityName, activity.rawActivityName, activity.name]
     .some((title) => sameActivityTitle(title, planned.title));
-  return titleMatches ? getCanonicalSessionType(planned.workoutType) : null;
+  return titleMatches ? plannedOnDate[0] : null;
+}
+
+/**
+ * Supplies only the canonical planned type for an unsaved completed run. A direct
+ * Intervals pairing is authoritative. When Intervals explicitly has no pairing,
+ * the fallback requires one active plan, one completed run on that date, and the
+ * exact planned title; it never persists or reclassifies the activity.
+ */
+export function getPlannedWorkoutSessionTypeSuggestion(
+  activity: SourceActivity,
+  activities: SourceActivity[],
+  workouts: StoredFutureWorkout[],
+): string | null {
+  return getCanonicalSessionType(findCompletedPlannedWorkout(activity, activities, workouts)?.workout.workoutType);
+}
+
+function completedPlannedWorkoutIds(activities: SourceActivity[], workouts: StoredFutureWorkout[]): Set<string> {
+  const completed = new Set<string>();
+  for (const activity of activities) {
+    const workout = findCompletedPlannedWorkout(activity, activities, workouts);
+    if (workout) completed.add(workout.workout.pacerWorkoutId);
+  }
+  return completed;
 }
 
 function getActivityWorkoutCode(activity: SourceActivity): string | null {
@@ -895,9 +917,15 @@ function publicWorkoutPaceRange(workout: FutureWorkoutProposal): { min: number |
 }
 
 /** The same eligibility rules as the global home-screen Next workout, without selected-session actions. */
-function selectPublicNextWorkout(workouts: ReturnType<typeof listStoredFutureWorkouts>, today: string): FutureWorkoutProposal | null {
+function selectPublicNextWorkout(
+  workouts: ReturnType<typeof listStoredFutureWorkouts>,
+  today: string,
+  activities: SourceActivity[],
+): FutureWorkoutProposal | null {
+  const completed = completedPlannedWorkoutIds(activities, workouts);
   return workouts
     .filter(({ workout, skip }) => !skip
+      && !completed.has(workout.pacerWorkoutId)
       && workout.lifecycle.approvalStatus === 'approved'
       && workout.lifecycle.syncStatus === 'synced'
       && workout.schedule.localDate >= today)
@@ -920,10 +948,11 @@ function localToday(timeZone: string): string {
 function buildCurrentPublicNextRun(
   latestSession: StoredSession | null,
   workouts: ReturnType<typeof listStoredFutureWorkouts>,
+  activities: SourceActivity[],
 ): SessionExportNextRun | null {
   if (!latestSession) return null;
   const timezone = workouts[0]?.workout.schedule.timezone ?? 'UTC';
-  const workout = selectPublicNextWorkout(workouts, localToday(timezone));
+  const workout = selectPublicNextWorkout(workouts, localToday(timezone), activities);
   if (!workout) return null;
   const durationMin = publicWorkoutDurationMinutes(workout);
   const pace = publicWorkoutPaceRange(workout);
@@ -950,11 +979,12 @@ export function refreshPublicNextRunSnapshot(expectedWorkoutId?: string): Sessio
   const latestSession = publishedSessions[0];
   if (!latestSession) throw new Error('A published completed session is required before refreshing the public Next Run.');
   const workouts = listStoredFutureWorkouts();
+  const activities = readActivityBundle()?.activities ?? [];
   const timezone = workouts[0]?.workout.schedule.timezone ?? 'UTC';
-  const workout = selectPublicNextWorkout(workouts, localToday(timezone));
+  const workout = selectPublicNextWorkout(workouts, localToday(timezone), activities);
   if (!workout) throw new Error('No eligible approved and synchronized future workout is available for public Next Run.');
   if (expectedWorkoutId && workout.pacerWorkoutId !== expectedWorkoutId) throw new Error('Only the current eligible Next workout can be published.');
-  const nextRun = buildCurrentPublicNextRun(latestSession, workouts);
+  const nextRun = buildCurrentPublicNextRun(latestSession, workouts, activities);
   if (!nextRun) throw new Error('No eligible approved and synchronized future workout is available for public Next Run.');
   writeJsonFile('next-run.json', nextRun);
   return nextRun;
@@ -1497,7 +1527,7 @@ export function publishSnapshots(): PublishArtifacts {
   };
   const publishedSessionExports = publishedSessions.map((session) => buildLatestExport(session, findSourceActivity(session)));
   const latestExport = latestSession ? buildLatestExport(latestSession, findSourceActivity(latestSession)) : null;
-  const nextRunExport = buildCurrentPublicNextRun(latestSession, listStoredFutureWorkouts());
+  const nextRunExport = buildCurrentPublicNextRun(latestSession, listStoredFutureWorkouts(), activityBundle?.activities ?? []);
   const snapshotDraft = buildWeeklySnapshotFromSessions(publishedSessions);
   const weeklySummary = snapshotDraft ? upsertWeeklySnapshot(snapshotDraft) : null;
   const archiveList = buildArchiveList(publishedSessions.slice(1));
