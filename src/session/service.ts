@@ -941,6 +941,23 @@ function localToday(timeZone: string): string {
 }
 
 /**
+ * A future-workout-v1 proposal deliberately has no editorial distance field.
+ * Reuse Coachat's estimate only when its saved session is the proposal's exact
+ * source and names that same next workout; never borrow an older suggestion.
+ */
+function coachatDistanceForFutureWorkout(workout: FutureWorkoutProposal): number | null {
+  const source = getStoredSessionBySourceActivityId(workout.sourceSession.sourceActivityId);
+  if (!source
+    || source.core.sessionDate !== workout.sourceSession.sessionDate
+    || source.ai.nextRunTitle.trim() !== workout.title.trim()) return null;
+
+  const distanceKm = source.ai.nextRunDistanceKm;
+  return typeof distanceKm === 'number' && Number.isFinite(distanceKm) && distanceKm > 0
+    ? roundOneDecimal(distanceKm)
+    : null;
+}
+
+/**
  * Public Next Run is always a current, eligible planned workout. Completed-session
  * editorial advice is deliberately not a fallback: it can refer to a workout that
  * has since been skipped, cancelled, or superseded.
@@ -964,7 +981,7 @@ function buildCurrentPublicNextRun(
     type: workout.workoutType,
     durationMin,
     durationMax: durationMin,
-    distanceKm: estimateFutureWorkoutDistanceKm(workout.blocks),
+    distanceKm: coachatDistanceForFutureWorkout(workout) ?? estimateFutureWorkoutDistanceKm(workout.blocks),
     paceMinSecPerKm: pace.min,
     paceMaxSecPerKm: pace.max,
     workout: { title: workout.title, type: workout.workoutType, blocks: formatFutureWorkoutStructure(workout.blocks) },
