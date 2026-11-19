@@ -761,6 +761,18 @@ function compactWeekSummary(summary: string): string {
   return ensureTerminalPunctuation(trimSentenceToLength(candidate || normalized, 150));
 }
 
+/**
+ * Week summaries are planning prose, not historical activity metadata. Avoid
+ * publishing a weekday when it directly schedules a future running workout,
+ * while retaining the editorial instruction itself.
+ */
+export function compactPublicWeekSummary(summary: string): string {
+  return compactWeekSummary(summary).replace(
+    /\b(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday)\s*[’']s\s+((?:(?:long|easy|recovery|tempo|interval|speed|steady|aerobic|threshold|hill|race)\s+){0,2}(?:run|workout|session))\b/gi,
+    (_match, workout: string) => `The ${workout}`,
+  );
+}
+
 function compactNextRunSummary(summary: string, workout: SessionNextRunWorkout | null): string {
   const normalized = sanitizeText(summary);
   if (!normalized) return '';
@@ -831,7 +843,7 @@ function buildWeeklySnapshotFromSessions(sessions: StoredSession[]): WeeklySnaps
     totalRuns,
     totalTimeS,
     title: aiWeekTitle || deriveWeekTitle(totalKm, totalRuns),
-    summary: compactWeekSummary(aiWeekSummary || deriveWeekSummary(totalKm, totalRuns)),
+    summary: compactPublicWeekSummary(aiWeekSummary || deriveWeekSummary(totalKm, totalRuns)),
     bars: buildWeeklyBars(latestDate, windowSessions),
   };
 }

@@ -27,6 +27,7 @@
     "capture": "ts-node --transpile-only src/capture/runner.ts",
     "test:publish-attempts": "ts-node --transpile-only src/session/publish-attempt-regression-cli.ts",
     "test:next-run-publication": "ts-node --transpile-only src/session/next-run-distance-regression-cli.ts",
+    "test:weekly-summary-privacy": "ts-node --transpile-only src/session/weekly-summary-privacy-regression-cli.ts",
     "test:planned-session-type": "ts-node --transpile-only src/session/planned-session-type-regression-cli.ts",
     "test:review-publish-ui": "ts-node --transpile-only src/web/review-publish-ui-regression-cli.ts",
     "test:skip-workout": "ts-node --transpile-only src/workouts/skip-regression-cli.ts",
